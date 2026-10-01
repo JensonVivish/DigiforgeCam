@@ -1,7 +1,6 @@
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../config/app_config.dart';
 
-/// Manages the camera's local media capture and its WebRTC peer connection.
 class WebRTCService {
   RTCPeerConnection? _peerConnection;
   MediaStream? localStream;
@@ -22,7 +21,14 @@ class WebRTCService {
   }
 
   Future<RTCPeerConnection> initPeerConnection() async {
-    final config = {'iceServers': AppConfig.iceServers};
+    final config = {
+      'iceServers': AppConfig.iceServers,
+      'iceTransportPolicy': 'all',
+      'bundlePolicy': 'max-bundle',
+      'rtcpMuxPolicy': 'require',
+      'sdpSemantics': 'unified-plan',
+    };
+
     _peerConnection = await createPeerConnection(config);
 
     if (localStream != null) {
@@ -33,11 +39,21 @@ class WebRTCService {
 
     _peerConnection!.onIceCandidate = (candidate) => onIceCandidate?.call(candidate);
 
+    // Keep connection alive — detect drops early
+    _peerConnection!.onIceConnectionState = (state) {
+      if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
+        _peerConnection?.restartIce();
+      }
+    };
+
     return _peerConnection!;
   }
 
   Future<RTCSessionDescription> createOffer() async {
-    final offer = await _peerConnection!.createOffer();
+    final offer = await _peerConnection!.createOffer({
+      'offerToReceiveAudio': false,
+      'offerToReceiveVideo': false,
+    });
     await _peerConnection!.setLocalDescription(offer);
     return offer;
   }
