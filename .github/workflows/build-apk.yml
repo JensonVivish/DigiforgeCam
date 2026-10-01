@@ -16,20 +16,20 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
       - name: Scaffold Android platform files
-        working-directory: camera_app
+        working-directory: mobile-cctv/camera_app
         run: flutter create --platforms=android --org com.digiforgedynamics --project-name digiforge_cctv_camera .
       - name: Apply branding + permissions
-        working-directory: camera_app
+        working-directory: mobile-cctv/camera_app
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
           sed -i '/<manifest /a \    <uses-permission android:name="android.permission.CAMERA"\/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"\/>\n    <uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"\/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"\/>/' "$MANIFEST"
           sed -i 's/android:label="[^"]*"/android:label="Digiforge CCTV Camera"/' "$MANIFEST"
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle
       - name: Get dependencies
-        working-directory: camera_app
+        working-directory: mobile-cctv/camera_app
         run: flutter pub get
       - name: Build release APK
-        working-directory: camera_app
+        working-directory: mobile-cctv/camera_app
         run: flutter build apk --release
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -47,20 +47,20 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
       - name: Scaffold Android platform files
-        working-directory: viewer_app
+        working-directory: mobile-cctv/viewer_app
         run: flutter create --platforms=android --org com.digiforgedynamics --project-name digiforge_cctv_viewer .
       - name: Apply branding + permissions
-        working-directory: viewer_app
+        working-directory: mobile-cctv/viewer_app
         run: |
           MANIFEST=android/app/src/main/AndroidManifest.xml
           sed -i '/<manifest /a \    <uses-permission android:name="android.permission.CAMERA"\/>\n    <uses-permission android:name="android.permission.INTERNET"\/>/' "$MANIFEST"
           sed -i 's/android:label="[^"]*"/android:label="Digiforge CCTV Viewer"/' "$MANIFEST"
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle
       - name: Get dependencies
-        working-directory: viewer_app
+        working-directory: mobile-cctv/viewer_app
         run: flutter pub get
       - name: Build release APK
-        working-directory: viewer_app
+        working-directory: mobile-cctv/viewer_app
         run: flutter build apk --release
       - name: Upload APK
         uses: actions/upload-artifact@v4
