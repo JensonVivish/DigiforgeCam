@@ -18,56 +18,93 @@ class LiveViewScreen extends StatefulWidget {
 
 class _LiveViewScreenState extends State<LiveViewScreen> {
   final _remoteRenderer = RTCVideoRenderer();
-  final _signaling = SignalingService();
-  final _webrtc = WebRTCService();
+  SignalingService? _signaling;
+  WebRTCService? _webrtc;
   final _recording = RecordingService();
+
   String _status = 'Connecting to camera…';
   MediaStream? _remoteStream;
   Timer? _recordTimer;
+  Timer? _reconnectTimer;
   Duration _recordedFor = Duration.zero;
+  int _reconnectAttempts = 0;
+  bool _disposed = false;
 
   @override
   void initState() {
     super.initState();
-    _init();
+    _connect();
   }
 
-  Future<void> _init() async {
-    await _remoteRenderer.initialize();
-    await _webrtc.initPeerConnection();
+  Future<void> _connect() async {
+    if (_disposed) return;
 
-    _webrtc.onRemoteStream = (stream) {
+    // Clean up previous connection if reconnecting
+    await _signaling?.dispose();
+    await _webrtc?.dispose();
+
+    _signaling = SignalingService();
+    _webrtc = WebRTCService();
+
+    if (mounted) setState(() => _status = _reconnectAttempts > 0
+        ? 'Reconnecting… (attempt $_reconnectAttempts)'
+        : 'Connecting to camera…');
+
+    await _remoteRenderer.initialize();
+    await _webrtc!.initPeerConnection();
+
+    _webrtc!.onRemoteStream = (stream) {
+      if (!mounted) return;
       _remoteRenderer.srcObject = stream;
       _remoteStream = stream;
-      if (mounted) setState(() => _status = 'Live');
+      _reconnectAttempts = 0;
+      setState(() => _status = 'Live');
     };
 
-    _webrtc.onIceCandidate = (candidate) {
-      _signaling.sendIceCandidate(iceCandidateToMap(candidate));
+    _webrtc!.onIceCandidate = (candidate) {
+      _signaling?.sendIceCandidate(iceCandidateToMap(candidate));
     };
 
-    _signaling.onSignal = (data) async {
+    _webrtc!.onConnectionFailed = () {
+      if (!mounted || _disposed) return;
+      _scheduleReconnect();
+    };
+
+    _signaling!.onSignal = (data) async {
       if (data['kind'] == 'offer') {
         final offer = sdpFromMap(Map<String, dynamic>.from(data['payload']));
-        await _webrtc.setRemoteOffer(offer);
-        final answer = await _webrtc.createAnswer();
-        await _signaling.sendAnswer(sdpToMap(answer));
+        await _webrtc!.setRemoteOffer(offer);
+        final answer = await _webrtc!.createAnswer();
+        await _signaling!.sendAnswer(sdpToMap(answer));
       } else if (data['kind'] == 'ice-candidate') {
         final candidate =
             iceCandidateFromMap(Map<String, dynamic>.from(data['payload']));
-        await _webrtc.addIceCandidate(candidate);
+        await _webrtc!.addIceCandidate(candidate);
       }
     };
 
-    _signaling.onPeerDisconnected = () {
-      if (mounted) setState(() => _status = 'Camera disconnected');
+    _signaling!.onPeerDisconnected = () {
+      if (!mounted || _disposed) return;
+      setState(() => _status = 'Camera disconnected — reconnecting…');
+      _scheduleReconnect();
     };
 
-    _signaling.onError = (message) {
+    _signaling!.onError = (message) {
       if (mounted) setState(() => _status = 'Error: $message');
     };
 
-    await _signaling.joinSession(widget.pairingCode);
+    await _signaling!.joinSession(widget.pairingCode);
+  }
+
+  void _scheduleReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectAttempts++;
+    // Exponential backoff: 3s, 6s, 12s — max 30s
+    final delay = Duration(seconds: (_reconnectAttempts * 3).clamp(3, 30));
+    if (mounted) setState(() => _status = 'Reconnecting in ${delay.inSeconds}s…');
+    _reconnectTimer = Timer(delay, () {
+      if (!_disposed && mounted) _connect();
+    });
   }
 
   Future<void> _toggleRecording() async {
@@ -99,10 +136,12 @@ class _LiveViewScreenState extends State<LiveViewScreen> {
 
   @override
   void dispose() {
+    _disposed = true;
     _remoteRenderer.dispose();
-    _signaling.dispose();
-    _webrtc.dispose();
+    _signaling?.dispose();
+    _webrtc?.dispose();
     _recordTimer?.cancel();
+    _reconnectTimer?.cancel();
     if (_recording.isRecording) _recording.stop();
     super.dispose();
   }
@@ -119,6 +158,35 @@ class _LiveViewScreenState extends State<LiveViewScreen> {
               children: [
                 RTCVideoView(_remoteRenderer,
                     objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain),
+                if (_status != 'Live')
+                  Container(
+                    color: Colors.black54,
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(color: DigiforgeBrand.accent),
+                          const SizedBox(height: 16),
+                          Text(_status,
+                              style: const TextStyle(
+                                  color: DigiforgeBrand.textPrimary,
+                                  fontSize: 16)),
+                          if (_reconnectAttempts > 0) ...[
+                            const SizedBox(height: 8),
+                            TextButton(
+                              onPressed: () {
+                                _reconnectTimer?.cancel();
+                                _reconnectAttempts = 0;
+                                _connect();
+                              },
+                              child: const Text('Retry now',
+                                  style: TextStyle(color: DigiforgeBrand.accent)),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
                 if (_recording.isRecording)
                   Positioned(top: 16, right: 16, child: _recBadge()),
                 if (_remoteStream != null)
@@ -144,10 +212,25 @@ class _LiveViewScreenState extends State<LiveViewScreen> {
           ),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             color: DigiforgeBrand.surface,
-            child: Text(_status,
-                style: const TextStyle(color: DigiforgeBrand.textSecondary)),
+            child: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _status == 'Live'
+                        ? DigiforgeBrand.accent
+                        : DigiforgeBrand.textSecondary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(_status,
+                    style: const TextStyle(color: DigiforgeBrand.textSecondary)),
+              ],
+            ),
           ),
         ],
       ),
@@ -157,8 +240,8 @@ class _LiveViewScreenState extends State<LiveViewScreen> {
   Widget _recBadge() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration:
-          BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+      decoration: BoxDecoration(
+          color: Colors.black54, borderRadius: BorderRadius.circular(20)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         const Icon(Icons.fiber_manual_record, color: DigiforgeBrand.danger, size: 12),
         const SizedBox(width: 6),
