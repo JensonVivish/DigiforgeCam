@@ -1,22 +1,37 @@
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../config/app_config.dart';
 
-/// Manages the viewer's WebRTC peer connection and receives the camera's
-/// remote media stream. The viewer sends no media of its own.
 class WebRTCService {
   RTCPeerConnection? _peerConnection;
 
   Function(MediaStream stream)? onRemoteStream;
   Function(RTCIceCandidate candidate)? onIceCandidate;
+  Function()? onConnectionFailed;
 
   Future<RTCPeerConnection> initPeerConnection() async {
-    final config = {'iceServers': AppConfig.iceServers};
+    final config = {
+      'iceServers': AppConfig.iceServers,
+      'iceTransportPolicy': 'all',
+      'bundlePolicy': 'max-bundle',
+      'rtcpMuxPolicy': 'require',
+      'sdpSemantics': 'unified-plan',
+    };
+
     _peerConnection = await createPeerConnection(config);
 
     _peerConnection!.onIceCandidate = (candidate) => onIceCandidate?.call(candidate);
+
     _peerConnection!.onTrack = (event) {
       if (event.streams.isNotEmpty) {
         onRemoteStream?.call(event.streams[0]);
+      }
+    };
+
+    // Detect and report connection failures
+    _peerConnection!.onIceConnectionState = (state) {
+      if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
+        _peerConnection?.restartIce();
+        onConnectionFailed?.call();
       }
     };
 
