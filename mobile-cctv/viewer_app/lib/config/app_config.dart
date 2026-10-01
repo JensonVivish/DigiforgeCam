@@ -1,8 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
 
-/// DigiforgeDynamics CCTV — Firebase project config.
-/// Signaling runs entirely through Firebase Realtime Database —
-/// no separate signaling server needed.
 class AppConfig {
   static const FirebaseOptions firebaseOptions = FirebaseOptions(
     apiKey: 'AIzaSyDudBbfIHnLxTbthxIR9XSFiZ4QfNYHGvE',
@@ -14,23 +11,29 @@ class AppConfig {
     appId: '1:378702996885:web:1631521edd0665180e829c',
   );
 
-static const List<Map<String, dynamic>> iceServers = [
-  {'urls': 'stun:stun.l.google.com:19302'},
-  {'urls': 'stun:stun1.l.google.com:19302'},
-  {
-    'urls': 'turn:openrelay.metered.ca:80',
-    'username': 'openrelayproject',
-    'credential': 'openrelayproject',
-  },
-  {
-    'urls': 'turn:openrelay.metered.ca:443',
-    'username': 'openrelayproject',
-    'credential': 'openrelayproject',
-  },
-  {
-    'urls': 'turn:openrelay.metered.ca:443?transport=tcp',
-    'username': 'openrelayproject',
-    'credential': 'openrelayproject',
-  },
-];
+  static const List<Map<String, dynamic>> iceServers = [
+    {
+      'urls': 'stun:stun.relay.metered.ca:80',
+    },
+    {
+      'urls': 'turn:global.relay.metered.ca:80',
+      'username': '16692b23a1916b00b4b9b0df',
+      'credential': 'VXMVU4j9gG/LtumU',
+    },
+    {
+      'urls': 'turn:global.relay.metered.ca:80?transport=tcp',
+      'username': '16692b23a1916b00b4b9b0df',
+      'credential': 'VXMVU4j9gG/LtumU',
+    },
+    {
+      'urls': 'turn:global.relay.metered.ca:443',
+      'username': '16692b23a1916b00b4b9b0df',
+      'credential': 'VXMVU4j9gG/LtumU',
+    },
+    {
+      'urls': 'turns:global.relay.metered.ca:443?transport=tcp',
+      'username': '16692b23a1916b00b4b9b0df',
+      'credential': 'VXMVU4j9gG/LtumU',
+    },
+  ];
 }
