@@ -1,0 +1,27 @@
+name: digiforge_cctv_viewer
+description: DigiforgeDynamics CCTV Viewer — watch a paired Digiforge camera live.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_webrtc: ^0.11.7
+  firebase_core: ^3.6.0
+  firebase_database: ^11.1.4
+  mobile_scanner: ^5.2.3
+  permission_handler: ^11.3.1
+  path_provider: ^2.1.4
+  video_player: ^2.9.2
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

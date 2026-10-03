@@ -1,0 +1,85 @@
+name: Build DigiforgeDynamics CCTV APKs
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  build-camera-app:
+    name: Build Camera App APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+      - name: Scaffold Android platform files
+        working-directory: mobile-cctv/camera_app
+        run: flutter create --platforms=android --org com.digiforgedynamics --project-name digiforge_cctv_camera .
+      - name: Apply branding + permissions
+        working-directory: mobile-cctv/camera_app
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          for P in CAMERA RECORD_AUDIO INTERNET WAKE_LOCK MODIFY_AUDIO_SETTINGS ACCESS_NETWORK_STATE CHANGE_NETWORK_STATE; do
+            sed -i "/<manifest /a \    <uses-permission android:name=\"android.permission.$P\"/>" "$MANIFEST"
+          done
+          sed -i 's/android:label="[^"]*"/android:label="Digiforge CCTV Camera"/' "$MANIFEST"
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/' android/app/build.gradle
+          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/' android/app/build.gradle
+      - name: Get dependencies
+        working-directory: mobile-cctv/camera_app
+        run: flutter pub get
+      - name: Build release APK
+        working-directory: mobile-cctv/camera_app
+        run: flutter build apk --release
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: digiforge-cctv-camera-apk
+          path: mobile-cctv/camera_app/build/app/outputs/flutter-apk/app-release.apk
+
+  build-viewer-app:
+    name: Build Viewer App APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+      - name: Scaffold Android platform files
+        working-directory: mobile-cctv/viewer_app
+        run: flutter create --platforms=android --org com.digiforgedynamics --project-name digiforge_cctv_viewer .
+      - name: Apply branding + permissions
+        working-directory: mobile-cctv/viewer_app
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          for P in CAMERA INTERNET MODIFY_AUDIO_SETTINGS ACCESS_NETWORK_STATE CHANGE_NETWORK_STATE; do
+            sed -i "/<manifest /a \    <uses-permission android:name=\"android.permission.$P\"/>" "$MANIFEST"
+          done
+          sed -i 's/android:label="[^"]*"/android:label="Digiforge CCTV Viewer"/' "$MANIFEST"
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/' android/app/build.gradle
+          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/' android/app/build.gradle
+      - name: Get dependencies
+        working-directory: mobile-cctv/viewer_app
+        run: flutter pub get
+      - name: Build release APK
+        working-directory: mobile-cctv/viewer_app
+        run: flutter build apk --release
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: digiforge-cctv-viewer-apk
+          path: mobile-cctv/viewer_app/build/app/outputs/flutter-apk/app-release.apk
