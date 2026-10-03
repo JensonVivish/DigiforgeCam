@@ -1,0 +1,54 @@
+name: Build APKs
+
+on:
+  push:
+    paths:
+      - 'mobile-cctv/**'
+      - '.github/workflows/build-apks.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: camera_app
+            pkg: digiforge_cctv_camera
+            label: "DigiForge Camera"
+          - app: viewer_app
+            pkg: digiforge_cctv_viewer
+            label: "DigiForge Viewer"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.27.4'
+          cache: true
+
+      # The repo only holds Dart source; the Android scaffold is generated here.
+      - name: Generate Android project
+        working-directory: mobile-cctv/${{ matrix.app }}
+        run: |
+          flutter create --platforms=android --org com.digiforgedynamics --project-name ${{ matrix.pkg }} .
+          rm -rf test
+          bash ../tools/prepare_android.sh "${{ matrix.label }}"
+
+      - name: Build release APK
+        working-directory: mobile-cctv/${{ matrix.app }}
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.pkg }}-apk
+          path: mobile-cctv/${{ matrix.app }}/build/app/outputs/flutter-apk/app-release.apk
