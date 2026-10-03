@@ -40,7 +40,6 @@ ThemeData dfTheme() {
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: DF.surface2,
-      counterText: '',
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,

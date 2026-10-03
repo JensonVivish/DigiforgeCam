@@ -119,7 +119,8 @@ class _LiveScreenState extends State<LiveScreen> {
               textAlign: TextAlign.center,
               style: const TextStyle(
                   fontSize: 24, fontWeight: FontWeight.w700, letterSpacing: 6),
-              decoration: InputDecoration(hintText: 'A3K8PZ', errorText: _err),
+              decoration: InputDecoration(
+                  hintText: 'A3K8PZ', errorText: _err, counterText: ''),
               onSubmitted: (_) => _typed(),
             ),
             const SizedBox(height: 12),
