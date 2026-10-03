@@ -1,51 +1,69 @@
-# DigiforgeDynamics CCTV
+# DigiforgeDynamics CCTV (prototype)
 
-Turn a spare phone into a live security camera, watched from another phone —
-built by DigiforgeDynamics.
-
-## Architecture
-
-```
-Camera app ──▶ Firebase Realtime Database ──▶ Viewer app
-                  (signaling only)
-                        │
-                        ▼
-              WebRTC peer-to-peer
-              (live video/audio — Firebase never sees it)
-```
-
-- **No server to deploy.** Signaling runs through your Firebase project (free, Google's infrastructure, always on).
-- **Video is peer-to-peer.** Once paired, the stream goes directly between the two devices — Firebase is not involved.
-
-## Repo structure
+Turn a spare Android phone into a live security camera and watch it from another phone.
+No subscription, no server of your own. WebRTC streams peer-to-peer; Firebase Realtime
+Database is only used for the pairing handshake.
 
 ```
 mobile-cctv/
-├── camera_app/          # Flutter — the camera device
-├── viewer_app/          # Flutter — the watching device
-├── .github/workflows/   # CI that builds real APKs on every push
-└── docs/
+  shared/       theme, brand mark, Firebase REST client, pairing code, clips browser
+  camera_app/   runs on the spare phone
+  viewer_app/   runs on your phone
+  tools/        CI helper that patches the generated Android project
 ```
 
-## Getting APKs
+## 1. Create the Firebase database (once, ~2 minutes)
 
-Push this repo to GitHub (`main` branch) → go to **Actions** tab → wait ~3 min → open the run → **Artifacts** → download both APKs.
+1. Firebase console -> create a project -> **Build -> Realtime Database -> Create database**.
+2. Open the **Rules** tab and paste this (prototype rules), then Publish:
 
-No local Flutter SDK needed.
+```json
+{
+  "rules": {
+    "cams":   { ".read": true, ".write": true },
+    "config": { ".read": true, ".write": false }
+  }
+}
+```
 
-## Firebase is already configured
+3. Copy the database URL (looks like `https://my-project-default-rtdb.firebaseio.com`) and paste it into
+   `shared/lib/src/config.dart` in place of the placeholder.
 
-Firebase credentials are already in `lib/config/app_config.dart` in both apps — no additional setup needed to build and run.
+No `google-services.json` and no Firebase SDK are needed; the apps talk to the REST API.
 
-## Before publishing to the Play Store
+## 2. Build the APKs
 
-- Change Firebase Realtime Database rules from Test mode to authenticated access
-- Add a privacy policy (see `docs/PRIVACY_POLICY_TEMPLATE.md`)
-- Frame the app as a self-owned home security tool in your store listing
+Push this repo to GitHub. The **Build APKs** workflow runs on every push (or run it manually
+from the Actions tab). Download `digiforge_cctv_camera-apk` and `digiforge_cctv_viewer-apk`
+from the run's artifacts and install them.
 
-## Features
-- 📹 Live WebRTC video streaming between two phones
-- 🔗 QR code pairing — no manual IP or URL entry
-- ⏺ Local recording on both camera and viewer devices
-- 🌙 Wakelock — camera screen stays on while monitoring
-- 🎨 DigiforgeDynamics dark theme with cyan accent
+Local build (needs Flutter 3.27+): inside `camera_app/` or `viewer_app/` run
+`flutter create --platforms=android --org com.digiforgedynamics --project-name <pkg> .`,
+then `bash ../tools/prepare_android.sh "DigiForge Camera"`, then `flutter run`.
+
+## 3. Use it
+
+1. Open **DigiForge Camera** on the spare phone, allow camera + microphone, plug it in and leave the app open.
+   It shows a permanent 6-character code and a QR.
+2. Open **DigiForge Viewer** on your phone, tap **Scan QR code** (or type the code), and you are live.
+3. Tap **Record clip** on either side to save an mp4 (Recordings / Clips tab).
+4. Next time, tap **Reconnect** on the Viewer home screen.
+
+## Optional: TURN relay for strict networks
+
+In the Firebase console add a node `config/turn`:
+
+```json
+{ "urls": "turn:your.turn.server:3478", "username": "user", "credential": "secret" }
+```
+
+Both apps read it on every connection, so no rebuild is required.
+
+## Prototype limitations
+
+- The camera must stay in the foreground with the screen on (no background service yet).
+- Android only for now.
+- Signaling uses 1-second polling over REST, so pairing takes a second or two.
+- Presence changes can take up to ~15 seconds to show on the viewer.
+- If the release APK crashes on launch, add `--no-shrink` to `flutter build apk` in the workflow.
+- The "DF" logo is a placeholder drawn in code; swap in the real logo asset later.
