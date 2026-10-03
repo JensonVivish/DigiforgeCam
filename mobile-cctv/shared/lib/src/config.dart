@@ -1,5 +1,5 @@
 const String _envDbUrl = String.fromEnvironment('DB_URL');
-const String _placeholderDbUrl = 'https://YOUR-PROJECT-default-rtdb.firebaseio.com';
+const String _placeholderDbUrl = 'https://digiforge-cctv-b9fee-default-rtdb.firebaseio.com';
 
 /// Your Firebase Realtime Database URL.
 /// Paste it below (replace the placeholder) or build with --dart-define=DB_URL=...
