@@ -24,6 +24,8 @@ class CameraScreen extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: [
             const ConfigNotice(),
+            _PairingCard(svc: svc),
+            const SizedBox(height: 16),
             _Preview(svc: svc),
             const SizedBox(height: 16),
             FilledButton.icon(
@@ -40,8 +42,6 @@ class CameraScreen extends StatelessWidget {
                   : Icons.fiber_manual_record_rounded),
               label: Text(svc.recording ? 'Stop recording' : 'Record clip'),
             ),
-            const SizedBox(height: 16),
-            _PairingCard(svc: svc),
           ],
         );
       },
@@ -121,42 +121,54 @@ class _PairingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DFCard(
-      child: Column(
+      child: Row(
         children: [
-          const SectionLabel('Pairing code'),
-          const SizedBox(height: 8),
-          SelectableText(
-            svc.code,
-            style: const TextStyle(
-              fontSize: 38,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 8,
-              color: DF.accent,
-            ),
-          ),
-          const SizedBox(height: 14),
           Container(
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(14),
             ),
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(6),
             child: QrImageView(
               data: PairingCode.qrPayload(svc.code),
-              size: 170,
+              size: 120,
               backgroundColor: Colors.white,
             ),
           ),
-          const SizedBox(height: 12),
-          const Text(
-            'In the Viewer app, scan this QR or type the code.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: DF.muted, fontSize: 13),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            svc.viewers == 1 ? '1 viewer connected' : '${svc.viewers} viewers connected',
-            style: const TextStyle(fontWeight: FontWeight.w600),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionLabel('Pairing code'),
+                const SizedBox(height: 6),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: SelectableText(
+                    svc.code,
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 5,
+                      color: DF.accent,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Scan in the Viewer app, or type this code.',
+                  style: TextStyle(color: DF.muted, fontSize: 12),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  svc.viewers == 1
+                      ? '1 viewer connected'
+                      : '${svc.viewers} viewers connected',
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+              ],
+            ),
           ),
         ],
       ),
