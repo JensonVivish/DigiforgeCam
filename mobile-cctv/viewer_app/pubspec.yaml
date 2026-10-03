@@ -1,0 +1,21 @@
+name: digiforge_cctv_viewer
+description: DigiforgeDynamics CCTV - Viewer app. Watch your spare-phone camera live from anywhere.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  digiforge_shared:
+    path: ../shared
+  flutter_webrtc: ^0.12.9
+  mobile_scanner: ^5.2.3
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

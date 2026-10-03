@@ -1,0 +1,22 @@
+name: digiforge_cctv_camera
+description: DigiforgeDynamics CCTV - Camera app. Turns a spare phone into a live security camera.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  digiforge_shared:
+    path: ../shared
+  flutter_webrtc: ^0.12.9
+  qr_flutter: ^4.1.0
+  wakelock_plus: ^1.2.8
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

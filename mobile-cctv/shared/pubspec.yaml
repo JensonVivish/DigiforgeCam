@@ -1,0 +1,15 @@
+name: digiforge_shared
+description: Shared code for the DigiforgeDynamics CCTV apps (theme, signaling, pairing, clips).
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  shared_preferences: ^2.3.3
+  path_provider: ^2.1.5
+  video_player: ^2.9.2
