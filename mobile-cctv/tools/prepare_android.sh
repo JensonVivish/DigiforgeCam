@@ -26,3 +26,6 @@ PY
 for f in android/app/build.gradle android/app/build.gradle.kts; do
   if [ -f "$f" ]; then sed -i 's/flutter\.minSdkVersion/24/g' "$f"; fi
 done
+
+# Keep the screen on while the app is open (native flag, no plugin needed).
+python3 "$(dirname "$0")/patch_main_activity.py"
