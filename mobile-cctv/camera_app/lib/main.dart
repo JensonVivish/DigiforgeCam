@@ -1,7 +1,6 @@
 import 'package:digiforge_shared/digiforge_shared.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'camera_screen.dart';
 import 'camera_service.dart';
@@ -41,14 +40,12 @@ class _CameraHomeState extends State<CameraHome> {
   @override
   void initState() {
     super.initState();
-    WakelockPlus.enable(); // keep the camera phone awake
     _svc.onClipSaved = () => _clipsRefresh.value++;
     _svc.start();
   }
 
   @override
   void dispose() {
-    WakelockPlus.disable();
     _svc.dispose();
     _clipsRefresh.dispose();
     super.dispose();

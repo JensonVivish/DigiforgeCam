@@ -61,7 +61,7 @@ Both apps read it on every connection, so no rebuild is required.
 
 ## Prototype limitations
 
-- The camera must stay in the foreground with the screen on (no background service yet).
+- The camera must stay in the foreground (the screen is kept on automatically while the app is open; no background service yet).
 - Android only for now.
 - Signaling uses 1-second polling over REST, so pairing takes a second or two.
 - Presence changes can take up to ~15 seconds to show on the viewer.
