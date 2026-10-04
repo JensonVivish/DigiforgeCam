@@ -1,0 +1,28 @@
+package __PKG__
+
+import android.content.Context
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.dart.DartExecutor
+
+/**
+ * One FlutterEngine for the whole process. It outlives the Activity, so the
+ * camera keeps streaming after the screen turns off or the app is swiped away.
+ */
+object EngineHolder {
+    @Volatile
+    private var engine: FlutterEngine? = null
+
+    @Synchronized
+    fun get(context: Context): FlutterEngine {
+        val existing = engine
+        if (existing != null) return existing
+        val app = context.applicationContext
+        val created = FlutterEngine(app)
+        Bridge.register(created, app)
+        created.dartExecutor.executeDartEntrypoint(
+            DartExecutor.DartEntrypoint.createDefault()
+        )
+        engine = created
+        return created
+    }
+}

@@ -1,14 +1,14 @@
 import 'package:digiforge_shared/digiforge_shared.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'camera_screen.dart';
-import 'camera_service.dart';
+import 'runtime.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.light);
   runApp(const CameraApp());
+  // Not tied to any widget: this also runs when started headless (after boot).
+  startRuntime();
 }
 
 class CameraApp extends StatelessWidget {
@@ -32,21 +32,29 @@ class CameraHome extends StatefulWidget {
   State<CameraHome> createState() => _CameraHomeState();
 }
 
-class _CameraHomeState extends State<CameraHome> {
-  final CameraService _svc = CameraService();
+class _CameraHomeState extends State<CameraHome> with WidgetsBindingObserver {
   final ValueNotifier<int> _clipsRefresh = ValueNotifier<int>(0);
   int _tab = 0;
 
   @override
   void initState() {
     super.initState();
-    _svc.onClipSaved = () => _clipsRefresh.value++;
-    _svc.start();
+    WidgetsBinding.instance.addObserver(this);
+    cameraService.onClipSaved = () => _clipsRefresh.value++;
+    cameraService.setUiVisible(true);
+    startRuntime(); // no-op if main() already started it
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    cameraService.setUiVisible(state == AppLifecycleState.resumed);
   }
 
   @override
   void dispose() {
-    _svc.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    cameraService.onClipSaved = null;
+    cameraService.setUiVisible(false);
     _clipsRefresh.dispose();
     super.dispose();
   }
@@ -61,7 +69,7 @@ class _CameraHomeState extends State<CameraHome> {
       body: IndexedStack(
         index: _tab,
         children: [
-          CameraScreen(svc: _svc),
+          CameraScreen(svc: cameraService, bg: backgroundController),
           ClipsScreen(
             title: 'Recordings',
             emptyHint: 'No recordings yet.\nStart a recording from the Camera tab.',

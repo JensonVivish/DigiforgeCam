@@ -24,7 +24,7 @@ PY
 
 # flutter_webrtc needs a higher minSdk than Flutter's default.
 for f in android/app/build.gradle android/app/build.gradle.kts; do
-  if [ -f "$f" ]; then sed -i 's/flutter\.minSdkVersion/24/g' "$f"; fi
+  if [ -f "$f" ]; then sed -i 's/flutter\.minSdkVersion/21/g' "$f"; fi
 done
 
 # Keep the screen on while the app is open (native flag, no plugin needed).

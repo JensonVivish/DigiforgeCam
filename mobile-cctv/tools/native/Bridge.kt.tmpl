@@ -1,0 +1,192 @@
+package __PKG__
+
+import android.app.Activity
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+
+/** Platform channel between the Flutter UI and the native background features. */
+object Bridge {
+    const val CHANNEL = "digiforge/background"
+    const val PREFS = "digiforge_bg"
+    const val KEY_AUTOSTART = "autostart"
+    const val EXTRA_AUTOSTART = "autostart_launch"
+    const val BOOT_NOTIF_ID = 1002
+
+    @Volatile
+    var activity: Activity? = null
+
+    @Volatile
+    var autostartLaunch = false
+
+    /** PendingIntent flags that work from Android 5 up. */
+    fun piFlags(): Int {
+        return if (Build.VERSION.SDK_INT >= 23) {
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+    }
+
+    fun register(engine: FlutterEngine, app: Context) {
+        MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
+            .setMethodCallHandler { call, result ->
+                try {
+                    handle(app, call, result)
+                } catch (e: Exception) {
+                    result.error("native", e.message, null)
+                }
+            }
+    }
+
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun handle(ctx: Context, call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "status" -> result.success(status(ctx))
+            "start" -> {
+                CameraForegroundService.start(ctx, call.argument<String>("text") ?: "Standby")
+                result.success(true)
+            }
+            "stop" -> {
+                CameraForegroundService.stopService(ctx)
+                result.success(true)
+            }
+            "setStatus" -> {
+                CameraForegroundService.update(ctx, call.argument<String>("text") ?: "")
+                result.success(true)
+            }
+            "setAutostart" -> {
+                val v = call.argument<Boolean>("value") == true
+                prefs(ctx).edit().putBoolean(KEY_AUTOSTART, v).apply()
+                result.success(true)
+            }
+            "requestNotifications" -> {
+                requestNotifications(ctx)
+                result.success(true)
+            }
+            "requestBatteryExemption" -> {
+                requestBattery(ctx)
+                result.success(true)
+            }
+            "requestOverlay" -> {
+                if (Build.VERSION.SDK_INT >= 23) {
+                    launch(ctx, Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri(ctx)))
+                }
+                result.success(true)
+            }
+            "openAppSettings" -> {
+                launch(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(ctx)))
+                result.success(true)
+            }
+            "openVendorSettings" -> result.success(openVendorSettings(ctx))
+            "consumeAutostartLaunch" -> {
+                val v = autostartLaunch
+                autostartLaunch = false
+                result.success(v)
+            }
+            "moveToBackground" -> {
+                activity?.moveTaskToBack(true)
+                result.success(true)
+            }
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun pkgUri(ctx: Context): Uri = Uri.parse("package:" + ctx.packageName)
+
+    private fun status(ctx: Context): Map<String, Any> {
+        val sdk = Build.VERSION.SDK_INT
+        var notifications = true
+        if (sdk >= 24) {
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notifications = nm.areNotificationsEnabled()
+        }
+        var batteryExempt = true
+        var overlay = true
+        if (sdk >= 23) {
+            val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+            batteryExempt = pm.isIgnoringBatteryOptimizations(ctx.packageName)
+            overlay = Settings.canDrawOverlays(ctx)
+        }
+        return mapOf(
+            "running" to CameraForegroundService.running,
+            "notifications" to notifications,
+            "batteryExempt" to batteryExempt,
+            "overlay" to overlay,
+            "autostart" to prefs(ctx).getBoolean(KEY_AUTOSTART, false),
+            "manufacturer" to Build.MANUFACTURER.lowercase(),
+            "sdk" to sdk
+        )
+    }
+
+    private fun launch(ctx: Context, intent: Intent): Boolean {
+        return try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun requestNotifications(ctx: Context) {
+        val act = activity
+        if (Build.VERSION.SDK_INT >= 33 && act != null) {
+            act.requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 11)
+        } else if (Build.VERSION.SDK_INT >= 26) {
+            val i = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            i.putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+            launch(ctx, i)
+        } else {
+            launch(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(ctx)))
+        }
+    }
+
+    private fun requestBattery(ctx: Context) {
+        if (Build.VERSION.SDK_INT < 23) return // no battery optimisation on Android 5
+        val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkgUri(ctx))
+        if (!launch(ctx, direct)) {
+            launch(ctx, Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
+    }
+
+    /**
+     * Samsung and Realme/ColorOS hide their own battery and auto-launch screens
+     * behind vendor activities. Try the known ones (old and new); fall back to
+     * the app's settings page.
+     */
+    private fun openVendorSettings(ctx: Context): String {
+        val m = Build.MANUFACTURER.lowercase()
+        val targets = ArrayList<ComponentName>()
+        if (m.contains("samsung")) {
+            targets.add(ComponentName("com.samsung.android.lool", "com.samsung.android.sm.battery.ui.BatteryActivity"))
+            targets.add(ComponentName("com.samsung.android.lool", "com.samsung.android.sm.ui.battery.BatteryActivity"))
+            targets.add(ComponentName("com.samsung.android.sm", "com.samsung.android.sm.ui.battery.BatteryActivity"))
+            targets.add(ComponentName("com.samsung.android.sm_cn", "com.samsung.android.sm.ui.battery.BatteryActivity"))
+        }
+        if (m.contains("realme") || m.contains("oppo") || m.contains("oneplus")) {
+            targets.add(ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"))
+            targets.add(ComponentName("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"))
+            targets.add(ComponentName("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"))
+            targets.add(ComponentName("com.coloros.oppoguardelf", "com.coloros.powermanager.fuelgaue.PowerUsageModelActivity"))
+            targets.add(ComponentName("com.oplus.battery", "com.oplus.powermanager.fasttrack.StartupAppListActivity"))
+        }
+        for (c in targets) {
+            val i = Intent()
+            i.component = c
+            if (launch(ctx, i)) return "vendor"
+        }
+        launch(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(ctx)))
+        return "app"
+    }
+}

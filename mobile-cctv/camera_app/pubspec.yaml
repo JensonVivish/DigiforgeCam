@@ -13,6 +13,7 @@ dependencies:
     path: ../shared
   flutter_webrtc: ^0.12.9
   qr_flutter: ^4.1.0
+  shared_preferences: ^2.3.3
 
 dev_dependencies:
   flutter_lints: ^4.0.0

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import 'background.dart';
+import 'background_card.dart';
 import 'camera_service.dart';
 
 String _mmss(Duration d) {
@@ -12,8 +14,9 @@ String _mmss(Duration d) {
 }
 
 class CameraScreen extends StatelessWidget {
-  const CameraScreen({super.key, required this.svc});
+  const CameraScreen({super.key, required this.svc, required this.bg});
   final CameraService svc;
+  final BackgroundController bg;
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +29,8 @@ class CameraScreen extends StatelessWidget {
             const ConfigNotice(),
             _PairingCard(svc: svc),
             const SizedBox(height: 16),
+            BackgroundCard(bg: bg),
+            const SizedBox(height: 16),
             _Preview(svc: svc),
             const SizedBox(height: 16),
             FilledButton.icon(
@@ -36,7 +41,7 @@ class CameraScreen extends StatelessWidget {
                       minimumSize: const Size.fromHeight(50),
                     )
                   : null,
-              onPressed: svc.stream == null ? null : svc.toggleRecording,
+              onPressed: (svc.started || svc.stream != null) ? svc.toggleRecording : null,
               icon: Icon(svc.recording
                   ? Icons.stop_rounded
                   : Icons.fiber_manual_record_rounded),
@@ -79,7 +84,10 @@ class _Preview extends StatelessWidget {
                           size: 48, color: DF.muted),
                       const SizedBox(height: 10),
                       Text(
-                        svc.error ?? 'Starting camera...',
+                        svc.error ??
+                            (svc.sleeping
+                                ? 'Camera is sleeping to save battery.\nIt wakes when someone connects.'
+                                : 'Starting camera...'),
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: DF.muted),
                       ),

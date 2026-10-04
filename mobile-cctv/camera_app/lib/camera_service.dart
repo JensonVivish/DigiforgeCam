@@ -3,9 +3,20 @@ import 'dart:async';
 import 'package:digiforge_shared/digiforge_shared.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+// Modest capture settings: friendly to older phones, battery and mobile upload.
+const int kCaptureWidth = 640;
+const int kCaptureHeight = 480;
+const int kCaptureFps = 15;
+
+/// With battery saver on, the camera is switched off after this long with
+/// nobody watching and the app not on screen. It wakes when a viewer connects.
+const Duration kIdleSleepAfter = Duration(seconds: 30);
 
 /// Runs the camera side: captures video+audio, publishes presence, answers
 /// viewer offers through Firebase RTDB signaling, then streams peer-to-peer.
+/// Works without any UI (it is started from main(), not from a widget).
 class CameraService extends ChangeNotifier {
   final Rtdb _db = Rtdb();
   final RTCVideoRenderer renderer = RTCVideoRenderer();
@@ -17,6 +28,13 @@ class CameraService extends ChangeNotifier {
   bool recording = false;
   Duration recElapsed = Duration.zero;
   VoidCallback? onClipSaved;
+  VoidCallback? onReady; // fired once, when the camera first comes up
+  bool _readyFired = false;
+
+  /// Signaling is running (the first camera/permission check succeeded).
+  bool started = false;
+  bool saver = true;
+  bool uiVisible = false;
 
   final Map<String, RTCPeerConnection> _peers = {};
   final Set<String> _handled = {};
@@ -30,9 +48,14 @@ class CameraService extends ChangeNotifier {
   bool _polling = false;
   bool _rendererReady = false;
   bool _disposed = false;
+  DateTime _lastActive = DateTime.now();
+  Future<bool>? _opening;
   MediaRecorder? _recorder;
 
   bool get live => viewers > 0;
+
+  /// Camera is intentionally off to save battery.
+  bool get sleeping => started && stream == null && error == null;
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -41,39 +64,115 @@ class CameraService extends ChangeNotifier {
   Future<void> start() async {
     error = null;
     code = await PairingCode.loadOrCreate();
+    final p = await SharedPreferences.getInstance();
+    saver = p.getBool('battery_saver') ?? true;
     if (!_rendererReady) {
       await renderer.initialize();
       _rendererReady = true;
     }
     _notify();
 
-    if (stream == null) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          'audio': true,
-          'video': {
-            'facingMode': 'environment',
-            'width': {'ideal': 1280},
-            'height': {'ideal': 720},
-            'frameRate': {'ideal': 24},
-          },
-        });
-        renderer.srcObject = stream;
-      } catch (e) {
-        error = 'Camera or microphone unavailable. Grant permission and try again.';
-      }
+    final ok = await _openCamera();
+    if (ok && !_readyFired) {
+      _readyFired = true;
+      onReady?.call();
     }
-    _notify();
-    if (stream == null || !dbConfigured) return;
+    if (!ok || !dbConfigured || started) return;
 
+    started = true;
     _ice = await IceConfig.load(_db);
     await _safeDelete('cams/$code/sessions'); // drop stale offers
-    _poll?.cancel();
-    _beat?.cancel();
+    _lastActive = DateTime.now();
     _beatNow();
-    _beat = Timer.periodic(kPresenceBeat, (_) => _beatNow());
+    _beat = Timer.periodic(kPresenceBeat, (_) {
+      _beatNow();
+      _maybeSleep();
+    });
     _poll = Timer.periodic(const Duration(seconds: 1), (_) => _pollSessions());
+    _notify();
   }
+
+  // ---- Camera on/off ----------------------------------------------------
+
+  Future<bool> _openCamera() {
+    if (stream != null) return Future.value(true);
+    return _opening ??= _doOpen().whenComplete(() => _opening = null);
+  }
+
+  Future<bool> _doOpen() async {
+    try {
+      final s = await navigator.mediaDevices.getUserMedia({
+        'audio': true,
+        'video': {
+          'facingMode': 'environment',
+          'width': {'ideal': kCaptureWidth},
+          'height': {'ideal': kCaptureHeight},
+          'frameRate': {'ideal': kCaptureFps},
+        },
+      }).timeout(const Duration(seconds: 20));
+      stream = s;
+      renderer.srcObject = s;
+      error = null;
+      _notify();
+      return true;
+    } catch (_) {
+      error = 'Camera or microphone unavailable. Grant permission and try again.';
+      _notify();
+      return false;
+    }
+  }
+
+  Future<void> _closeCamera() async {
+    final s = stream;
+    if (s == null) return;
+    stream = null;
+    renderer.srcObject = null;
+    for (final t in s.getTracks()) {
+      try {
+        await t.stop();
+      } catch (_) {}
+    }
+    try {
+      await s.dispose();
+    } catch (_) {}
+    _notify();
+  }
+
+  void _maybeSleep() {
+    final busy = !saver ||
+        uiVisible ||
+        recording ||
+        _peers.isNotEmpty ||
+        viewers > 0;
+    if (busy) {
+      _lastActive = DateTime.now();
+      return;
+    }
+    if (stream != null &&
+        DateTime.now().difference(_lastActive) >= kIdleSleepAfter) {
+      _closeCamera();
+    }
+  }
+
+  void setUiVisible(bool v) {
+    uiVisible = v;
+    if (v) {
+      _lastActive = DateTime.now();
+      if (started && stream == null) _openCamera();
+    }
+    _notify();
+  }
+
+  Future<void> setSaver(bool v) async {
+    saver = v;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('battery_saver', v);
+    _lastActive = DateTime.now();
+    if (!v && started && stream == null) await _openCamera();
+    _notify();
+  }
+
+  // ---- Signaling --------------------------------------------------------
 
   Future<void> _beatNow() async {
     try {
@@ -97,7 +196,7 @@ class CameraService extends ChangeNotifier {
   }
 
   Future<void> _pollSessions() async {
-    if (_polling || stream == null || _disposed) return;
+    if (_polling || !started || _disposed) return;
     _polling = true;
     try {
       final data = await _db.get('cams/$code/sessions');
@@ -110,7 +209,10 @@ class CameraService extends ChangeNotifier {
           if (!_peers.containsKey(sid) &&
               !_handled.contains(sid) &&
               s['offer'] is Map) {
+            // A viewer wants in: wake the camera first if it is sleeping.
+            if (stream == null && !(await _openCamera())) continue;
             _handled.add(sid);
+            _lastActive = DateTime.now();
             await _accept(sid, Map<String, dynamic>.from(s['offer'] as Map));
           }
 
@@ -207,6 +309,7 @@ class CameraService extends ChangeNotifier {
 
   void _syncViewers() {
     viewers = _connected.length;
+    if (viewers > 0) _lastActive = DateTime.now();
     _notify();
     _beatNow();
   }
@@ -232,8 +335,10 @@ class CameraService extends ChangeNotifier {
   Future<void> toggleRecording() => recording ? stopRecording() : startRecording();
 
   Future<void> startRecording() async {
+    if (recording) return;
+    if (!(await _openCamera())) return;
     final s = stream;
-    if (s == null || s.getVideoTracks().isEmpty || recording) return;
+    if (s == null || s.getVideoTracks().isEmpty) return;
     try {
       final path = await ClipsStore.newPath('camera');
       final rec = MediaRecorder();
@@ -261,6 +366,7 @@ class CameraService extends ChangeNotifier {
     final rec = _recorder;
     _recorder = null;
     recording = false;
+    _lastActive = DateTime.now();
     try {
       await rec?.stop();
     } catch (e) {
