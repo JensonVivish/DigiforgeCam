@@ -3,20 +3,15 @@ import 'dart:async';
 import 'package:digiforge_shared/digiforge_shared.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 // Modest capture settings: friendly to older phones, battery and mobile upload.
 const int kCaptureWidth = 640;
 const int kCaptureHeight = 480;
 const int kCaptureFps = 15;
 
-/// With battery saver on, the camera is switched off after this long with
-/// nobody watching and the app not on screen. It wakes when a viewer connects.
-const Duration kIdleSleepAfter = Duration(seconds: 30);
-
-/// Runs the camera side: captures video+audio, publishes presence, answers
-/// viewer offers through Firebase RTDB signaling, then streams peer-to-peer.
-/// Works without any UI (it is started from main(), not from a widget).
+/// Camera side: captures video+audio, publishes presence, answers viewer offers
+/// through Firebase RTDB signaling, then streams peer-to-peer.
+/// Started from main(), not from a widget, so it also runs with no screen.
 class CameraService extends ChangeNotifier {
   final Rtdb _db = Rtdb();
   final RTCVideoRenderer renderer = RTCVideoRenderer();
@@ -25,18 +20,13 @@ class CameraService extends ChangeNotifier {
   MediaStream? stream;
   String? error;
   int viewers = 0;
-  bool recording = false;
-  Duration recElapsed = Duration.zero;
-  VoidCallback? onClipSaved;
+  String facing = 'environment'; // 'environment' = back, 'user' = front
   VoidCallback? onReady; // fired once, when the camera first comes up
   bool _readyFired = false;
-
-  /// Signaling is running (the first camera/permission check succeeded).
   bool started = false;
-  bool saver = true;
-  bool uiVisible = false;
 
   final Map<String, RTCPeerConnection> _peers = {};
+  final Map<String, RTCDataChannel> _channels = {};
   final Set<String> _handled = {};
   final Set<String> _connected = {};
   final Map<String, Set<String>> _seen = {};
@@ -44,18 +34,16 @@ class CameraService extends ChangeNotifier {
 
   Timer? _poll;
   Timer? _beat;
-  Timer? _recTimer;
+  Timer? _watch;
   bool _polling = false;
   bool _rendererReady = false;
   bool _disposed = false;
-  DateTime _lastActive = DateTime.now();
+  bool _restarting = false;
   Future<bool>? _opening;
-  MediaRecorder? _recorder;
+  int _lastFrames = -1;
+  int _stalls = 0;
 
   bool get live => viewers > 0;
-
-  /// Camera is intentionally off to save battery.
-  bool get sleeping => started && stream == null && error == null;
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -64,15 +52,13 @@ class CameraService extends ChangeNotifier {
   Future<void> start() async {
     error = null;
     code = await PairingCode.loadOrCreate();
-    final p = await SharedPreferences.getInstance();
-    saver = p.getBool('battery_saver') ?? true;
     if (!_rendererReady) {
       await renderer.initialize();
       _rendererReady = true;
     }
     _notify();
 
-    final ok = await _openCamera();
+    final ok = await ensureCamera();
     if (ok && !_readyFired) {
       _readyFired = true;
       onReady?.call();
@@ -82,41 +68,39 @@ class CameraService extends ChangeNotifier {
     started = true;
     _ice = await IceConfig.load(_db);
     await _safeDelete('cams/$code/sessions'); // drop stale offers
-    _lastActive = DateTime.now();
     _beatNow();
-    _beat = Timer.periodic(kPresenceBeat, (_) {
-      _beatNow();
-      _maybeSleep();
-    });
+    _beat = Timer.periodic(kPresenceBeat, (_) => _beatNow());
     _poll = Timer.periodic(const Duration(seconds: 1), (_) => _pollSessions());
+    _watch = Timer.periodic(const Duration(seconds: 10), (_) => _watchdog());
     _notify();
   }
 
-  // ---- Camera on/off ----------------------------------------------------
+  // ---- Camera -----------------------------------------------------------
 
-  Future<bool> _openCamera() {
+  /// Opens camera + mic if not open yet (this is also what asks for permission).
+  Future<bool> ensureCamera() {
     if (stream != null) return Future.value(true);
-    return _opening ??= _doOpen().whenComplete(() => _opening = null);
+    return _opening ??= _open().whenComplete(() => _opening = null);
   }
 
-  Future<bool> _doOpen() async {
+  Future<bool> _open() async {
     try {
       final s = await navigator.mediaDevices.getUserMedia({
         'audio': true,
         'video': {
-          'facingMode': 'environment',
+          'facingMode': facing,
           'width': {'ideal': kCaptureWidth},
           'height': {'ideal': kCaptureHeight},
           'frameRate': {'ideal': kCaptureFps},
         },
-      }).timeout(const Duration(seconds: 20));
+      }).timeout(const Duration(seconds: 25));
       stream = s;
       renderer.srcObject = s;
       error = null;
       _notify();
       return true;
     } catch (_) {
-      error = 'Camera or microphone unavailable. Grant permission and try again.';
+      error = 'Camera or microphone not available.';
       _notify();
       return false;
     }
@@ -138,38 +122,89 @@ class CameraService extends ChangeNotifier {
     _notify();
   }
 
-  void _maybeSleep() {
-    final busy = !saver ||
-        uiVisible ||
-        recording ||
-        _peers.isNotEmpty ||
-        viewers > 0;
-    if (busy) {
-      _lastActive = DateTime.now();
+  /// Flip between the back and front camera (works while streaming).
+  Future<void> switchFacing() async {
+    final s = stream;
+    if (s == null || s.getVideoTracks().isEmpty) return;
+    try {
+      await Helper.switchCamera(s.getVideoTracks().first);
+      facing = facing == 'environment' ? 'user' : 'environment';
+      for (final ch in _channels.values) {
+        _sendFacing(ch);
+      }
+      _notify();
+    } catch (_) {}
+  }
+
+  void _sendFacing(RTCDataChannel ch) {
+    try {
+      ch.send(RTCDataChannelMessage('facing:$facing'));
+    } catch (_) {}
+  }
+
+  // ---- Self-healing -----------------------------------------------------
+
+  /// If the camera silently freezes (it happens on some phones in the
+  /// background), the encoder stops producing frames. Detect that and restart.
+  Future<void> _watchdog() async {
+    if (_disposed || _restarting || viewers == 0) {
+      _lastFrames = -1;
+      _stalls = 0;
       return;
     }
-    if (stream != null &&
-        DateTime.now().difference(_lastActive) >= kIdleSleepAfter) {
-      _closeCamera();
+    int? frames;
+    for (final e in _peers.entries) {
+      if (!_connected.contains(e.key)) continue;
+      frames = await _framesEncoded(e.value);
+      if (frames != null) break;
+    }
+    if (frames == null) return;
+    if (frames > _lastFrames) {
+      _lastFrames = frames;
+      _stalls = 0;
+      return;
+    }
+    _stalls++;
+    if (_stalls >= 2) {
+      _stalls = 0;
+      _lastFrames = -1;
+      await _restartCamera();
     }
   }
 
-  void setUiVisible(bool v) {
-    uiVisible = v;
-    if (v) {
-      _lastActive = DateTime.now();
-      if (started && stream == null) _openCamera();
-    }
-    _notify();
+  Future<int?> _framesEncoded(RTCPeerConnection pc) async {
+    try {
+      final reports = await pc.getStats();
+      for (final r in reports) {
+        if (r.type != 'outbound-rtp') continue;
+        final kind = r.values['kind'] ?? r.values['mediaType'];
+        if (kind != 'video') continue;
+        final f = r.values['framesEncoded'];
+        if (f is num) return f.toInt();
+      }
+    } catch (_) {}
+    return null;
   }
 
-  Future<void> setSaver(bool v) async {
-    saver = v;
-    final p = await SharedPreferences.getInstance();
-    await p.setBool('battery_saver', v);
-    _lastActive = DateTime.now();
-    if (!v && started && stream == null) await _openCamera();
-    _notify();
+  Future<void> _restartCamera() async {
+    if (_restarting) return;
+    _restarting = true;
+    try {
+      // Tell viewers to reconnect right away instead of waiting for a timeout.
+      for (final ch in _channels.values) {
+        try {
+          ch.send(RTCDataChannelMessage('restart'));
+        } catch (_) {}
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      for (final sid in _peers.keys.toList()) {
+        await _drop(sid);
+      }
+      await _closeCamera();
+      await ensureCamera();
+    } finally {
+      _restarting = false;
+    }
   }
 
   // ---- Signaling --------------------------------------------------------
@@ -196,7 +231,7 @@ class CameraService extends ChangeNotifier {
   }
 
   Future<void> _pollSessions() async {
-    if (_polling || !started || _disposed) return;
+    if (_polling || !started || _disposed || _restarting) return;
     _polling = true;
     try {
       final data = await _db.get('cams/$code/sessions');
@@ -209,10 +244,8 @@ class CameraService extends ChangeNotifier {
           if (!_peers.containsKey(sid) &&
               !_handled.contains(sid) &&
               s['offer'] is Map) {
-            // A viewer wants in: wake the camera first if it is sleeping.
-            if (stream == null && !(await _openCamera())) continue;
+            if (stream == null && !(await ensureCamera())) continue;
             _handled.add(sid);
-            _lastActive = DateTime.now();
             await _accept(sid, Map<String, dynamic>.from(s['offer'] as Map));
           }
 
@@ -262,12 +295,22 @@ class CameraService extends ChangeNotifier {
         });
       };
 
+      // Control channel from the viewer (switch camera).
+      pc.onDataChannel = (RTCDataChannel ch) {
+        _channels[sid] = ch;
+        ch.onMessage = (RTCDataChannelMessage m) {
+          if (!m.isBinary && m.text == 'switch') switchFacing();
+        };
+        ch.onDataChannelState = (RTCDataChannelState st) {
+          if (st == RTCDataChannelState.RTCDataChannelOpen) _sendFacing(ch);
+        };
+      };
+
       pc.onConnectionState = (RTCPeerConnectionState state) {
         switch (state) {
           case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
             _connected.add(sid);
             _syncViewers();
-            // Handshake is done; tidy the signaling node shortly after.
             Timer(const Duration(seconds: 6),
                 () => _safeDelete('cams/$code/sessions/$sid'));
             break;
@@ -309,13 +352,13 @@ class CameraService extends ChangeNotifier {
 
   void _syncViewers() {
     viewers = _connected.length;
-    if (viewers > 0) _lastActive = DateTime.now();
     _notify();
     _beatNow();
   }
 
   Future<void> _drop(String sid) async {
     final pc = _peers.remove(sid);
+    _channels.remove(sid);
     _connected.remove(sid);
     _seen.remove(sid);
     _syncViewers();
@@ -330,58 +373,12 @@ class CameraService extends ChangeNotifier {
     }
   }
 
-  // ---- Recording --------------------------------------------------------
-
-  Future<void> toggleRecording() => recording ? stopRecording() : startRecording();
-
-  Future<void> startRecording() async {
-    if (recording) return;
-    if (!(await _openCamera())) return;
-    final s = stream;
-    if (s == null || s.getVideoTracks().isEmpty) return;
-    try {
-      final path = await ClipsStore.newPath('camera');
-      final rec = MediaRecorder();
-      await rec.start(
-        path,
-        videoTrack: s.getVideoTracks().first,
-        audioChannel: RecorderAudioChannel.INPUT,
-      );
-      _recorder = rec;
-      recording = true;
-      recElapsed = Duration.zero;
-      _recTimer?.cancel();
-      _recTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        recElapsed += const Duration(seconds: 1);
-        _notify();
-      });
-    } catch (e) {
-      error = 'Could not start recording: $e';
-    }
-    _notify();
-  }
-
-  Future<void> stopRecording() async {
-    _recTimer?.cancel();
-    final rec = _recorder;
-    _recorder = null;
-    recording = false;
-    _lastActive = DateTime.now();
-    try {
-      await rec?.stop();
-    } catch (e) {
-      error = 'Could not finish recording: $e';
-    }
-    onClipSaved?.call();
-    _notify();
-  }
-
   @override
   void dispose() {
     _disposed = true;
     _poll?.cancel();
     _beat?.cancel();
-    _recTimer?.cancel();
+    _watch?.cancel();
     for (final pc in _peers.values) {
       pc.close();
     }

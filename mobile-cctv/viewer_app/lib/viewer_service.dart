@@ -22,6 +22,7 @@ class ViewerService extends ChangeNotifier {
   bool recording = false;
   Duration recElapsed = Duration.zero;
   String? error;
+  String facing = ''; // 'environment' (back) or 'user' (front), reported by the camera
   VoidCallback? onClipSaved;
 
   RTCPeerConnection? _pc;
@@ -40,6 +41,10 @@ class ViewerService extends ChangeNotifier {
   Timer? _retryTimer;
   Timer? _presenceTimer;
   Timer? _recTimer;
+  Timer? _statsTimer;
+  RTCDataChannel? _dc;
+  int _lastDecoded = -1;
+  int _stall = 0;
   MediaRecorder? _recorder;
 
   String? _lastTs;
@@ -152,6 +157,23 @@ class ViewerService extends ChangeNotifier {
         init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
       );
 
+      // Control channel to the camera (switch front/back camera, restart notice).
+      final dc = await pc.createDataChannel(
+        'control',
+        RTCDataChannelInit()..ordered = true,
+      );
+      _dc = dc;
+      dc.onMessage = (RTCDataChannelMessage m) {
+        if (gen != _gen || m.isBinary) return;
+        final t = m.text;
+        if (t.startsWith('facing:')) {
+          facing = t.substring(7);
+          _n();
+        } else if (t == 'restart') {
+          _scheduleRetry();
+        }
+      };
+
       final offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await _db.put('cams/$cam/sessions/$sid/offer', {
@@ -178,6 +200,7 @@ class ViewerService extends ChangeNotifier {
         _answerTimer?.cancel();
         _deadline?.cancel();
         state = ViewerState.live;
+        _startStats(gen);
         _n();
         break;
       case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
@@ -268,6 +291,47 @@ class ViewerService extends ChangeNotifier {
   void _cancelPeerTimers() {
     _answerTimer?.cancel();
     _deadline?.cancel();
+    _statsTimer?.cancel();
+  }
+
+  /// Asks the camera to flip between back and front.
+  void switchCamera() {
+    final dc = _dc;
+    if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) return;
+    try {
+      dc.send(RTCDataChannelMessage('switch'));
+    } catch (_) {}
+  }
+
+  /// If decoded frames stop for ~15s the picture is frozen: reconnect.
+  void _startStats(int gen) {
+    _statsTimer?.cancel();
+    _lastDecoded = -1;
+    _stall = 0;
+    _statsTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (gen != _gen || state != ViewerState.live) return;
+      final pc = _pc;
+      if (pc == null) return;
+      int? decoded;
+      try {
+        final reports = await pc.getStats();
+        for (final r in reports) {
+          if (r.type != 'inbound-rtp') continue;
+          final kind = r.values['kind'] ?? r.values['mediaType'];
+          if (kind != 'video') continue;
+          final f = r.values['framesDecoded'];
+          if (f is num) decoded = f.toInt();
+        }
+      } catch (_) {}
+      if (decoded == null || gen != _gen) return;
+      if (decoded > _lastDecoded) {
+        _lastDecoded = decoded;
+        _stall = 0;
+      } else if (++_stall >= 3) {
+        _stall = 0;
+        _scheduleRetry();
+      }
+    });
   }
 
   Future<void> _teardownPeer() async {
@@ -279,6 +343,8 @@ class ViewerService extends ChangeNotifier {
     _sid = null;
     _cam = null;
     _remote = null;
+    _dc = null;
+    facing = '';
     renderer.srcObject = null;
     if (cam != null && sid != null) _safeDelete('cams/$cam/sessions/$sid');
     if (pc != null) {

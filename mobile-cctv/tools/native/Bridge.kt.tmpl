@@ -70,24 +70,15 @@ object Bridge {
                 prefs(ctx).edit().putBoolean(KEY_AUTOSTART, v).apply()
                 result.success(true)
             }
-            "requestNotifications" -> {
-                requestNotifications(ctx)
-                result.success(true)
-            }
-            "requestBatteryExemption" -> {
-                requestBattery(ctx)
-                result.success(true)
-            }
-            "requestOverlay" -> {
-                if (Build.VERSION.SDK_INT >= 23) {
+            "requestNotifications" -> result.success(requestNotifications(ctx))
+            "requestBatteryExemption" -> result.success(requestBattery(ctx))
+            "requestOverlay" -> result.success(
+                Build.VERSION.SDK_INT >= 23 &&
                     launch(ctx, Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri(ctx)))
-                }
-                result.success(true)
-            }
-            "openAppSettings" -> {
+            )
+            "openAppSettings" -> result.success(
                 launch(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(ctx)))
-                result.success(true)
-            }
+            )
             "openVendorSettings" -> result.success(openVendorSettings(ctx))
             "consumeAutostartLaunch" -> {
                 val v = autostartLaunch
@@ -123,7 +114,7 @@ object Bridge {
             "notifications" to notifications,
             "batteryExempt" to batteryExempt,
             "overlay" to overlay,
-            "autostart" to prefs(ctx).getBoolean(KEY_AUTOSTART, false),
+            "autostart" to prefs(ctx).getBoolean(KEY_AUTOSTART, true),
             "manufacturer" to Build.MANUFACTURER.lowercase(),
             "sdk" to sdk
         )
@@ -139,25 +130,25 @@ object Bridge {
         }
     }
 
-    private fun requestNotifications(ctx: Context) {
+    private fun requestNotifications(ctx: Context): Boolean {
         val act = activity
         if (Build.VERSION.SDK_INT >= 33 && act != null) {
             act.requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 11)
-        } else if (Build.VERSION.SDK_INT >= 26) {
+            return true
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
             val i = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
             i.putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
-            launch(ctx, i)
-        } else {
-            launch(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(ctx)))
+            return launch(ctx, i)
         }
+        return launch(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(ctx)))
     }
 
-    private fun requestBattery(ctx: Context) {
-        if (Build.VERSION.SDK_INT < 23) return // no battery optimisation on Android 5
+    private fun requestBattery(ctx: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 23) return false // no battery optimisation on Android 5
         val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkgUri(ctx))
-        if (!launch(ctx, direct)) {
-            launch(ctx, Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-        }
+        if (launch(ctx, direct)) return true
+        return launch(ctx, Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
     }
 
     /**
@@ -165,7 +156,7 @@ object Bridge {
      * behind vendor activities. Try the known ones (old and new); fall back to
      * the app's settings page.
      */
-    private fun openVendorSettings(ctx: Context): String {
+    private fun openVendorSettings(ctx: Context): Boolean {
         val m = Build.MANUFACTURER.lowercase()
         val targets = ArrayList<ComponentName>()
         if (m.contains("samsung")) {
@@ -184,9 +175,8 @@ object Bridge {
         for (c in targets) {
             val i = Intent()
             i.component = c
-            if (launch(ctx, i)) return "vendor"
+            if (launch(ctx, i)) return true
         }
-        launch(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(ctx)))
-        return "app"
+        return launch(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(ctx)))
     }
 }

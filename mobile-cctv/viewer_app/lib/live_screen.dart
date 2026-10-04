@@ -205,6 +205,25 @@ class _LiveScreenState extends State<LiveScreen> {
                   child: StatusBadge(
                       label: 'REC ${_mmss(svc.recElapsed)}', color: DF.danger),
                 ),
+              if (live && svc.facing.isNotEmpty)
+                Positioned(
+                  bottom: 12,
+                  left: 12,
+                  child: StatusBadge(
+                    label: svc.facing == 'user' ? 'FRONT CAMERA' : 'BACK CAMERA',
+                    color: DF.accent,
+                  ),
+                ),
+              if (live)
+                Positioned(
+                  right: 10,
+                  bottom: 10,
+                  child: IconButton.filled(
+                    onPressed: svc.switchCamera,
+                    icon: const Icon(Icons.cameraswitch_rounded),
+                    tooltip: 'Switch camera',
+                  ),
+                ),
             ],
           ),
         ),

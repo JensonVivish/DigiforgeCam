@@ -4,15 +4,9 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'background.dart';
-import 'background_card.dart';
 import 'camera_service.dart';
 
-String _mmss(Duration d) {
-  final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-  final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-  return '$m:$s';
-}
-
+/// Deliberately minimal: the preview, a camera flip button, the code and the QR.
 class CameraScreen extends StatelessWidget {
   const CameraScreen({super.key, required this.svc, required this.bg});
   final CameraService svc;
@@ -21,35 +15,42 @@ class CameraScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: svc,
+      listenable: Listenable.merge([svc, bg]),
       builder: (context, _) {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: [
             const ConfigNotice(),
-            _PairingCard(svc: svc),
-            const SizedBox(height: 16),
-            BackgroundCard(bg: bg),
-            const SizedBox(height: 16),
+            if (!bg.status.ok) const _MissingNative(),
             _Preview(svc: svc),
             const SizedBox(height: 16),
-            FilledButton.icon(
-              style: svc.recording
-                  ? FilledButton.styleFrom(
-                      backgroundColor: DF.danger,
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size.fromHeight(50),
-                    )
-                  : null,
-              onPressed: (svc.started || svc.stream != null) ? svc.toggleRecording : null,
-              icon: Icon(svc.recording
-                  ? Icons.stop_rounded
-                  : Icons.fiber_manual_record_rounded),
-              label: Text(svc.recording ? 'Stop recording' : 'Record clip'),
-            ),
+            _PairingCard(svc: svc),
           ],
         );
       },
+    );
+  }
+}
+
+class _MissingNative extends StatelessWidget {
+  const _MissingNative();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: DF.danger.withAlpha(30),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: DF.danger.withAlpha(140)),
+      ),
+      child: const Text(
+        'The background service is missing from this build, so the camera will '
+        'stop when the app is closed. Upload the whole mobile-cctv folder '
+        '(including tools/native) and run Build APKs again.',
+        style: TextStyle(color: DF.danger, fontSize: 13),
+      ),
     );
   }
 }
@@ -63,7 +64,7 @@ class _Preview extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(20),
       child: AspectRatio(
-        aspectRatio: 3 / 4,
+        aspectRatio: 4 / 3,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -81,13 +82,10 @@ class _Preview extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const Icon(Icons.videocam_off_outlined,
-                          size: 48, color: DF.muted),
+                          size: 44, color: DF.muted),
                       const SizedBox(height: 10),
                       Text(
-                        svc.error ??
-                            (svc.sleeping
-                                ? 'Camera is sleeping to save battery.\nIt wakes when someone connects.'
-                                : 'Starting camera...'),
+                        svc.error ?? 'Starting camera...',
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: DF.muted),
                       ),
@@ -106,15 +104,15 @@ class _Preview extends StatelessWidget {
                 color: svc.live ? DF.danger : DF.warn,
               ),
             ),
-            if (svc.recording)
-              Positioned(
-                top: 12,
-                right: 12,
-                child: StatusBadge(
-                  label: 'REC ${_mmss(svc.recElapsed)}',
-                  color: DF.danger,
-                ),
+            Positioned(
+              right: 10,
+              bottom: 10,
+              child: IconButton.filled(
+                onPressed: svc.stream == null ? null : svc.switchFacing,
+                icon: const Icon(Icons.cameraswitch_rounded),
+                tooltip: 'Switch camera',
               ),
+            ),
           ],
         ),
       ),
@@ -129,53 +127,31 @@ class _PairingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DFCard(
-      child: Row(
+      child: Column(
         children: [
+          const SectionLabel('Pairing code'),
+          const SizedBox(height: 8),
+          SelectableText(
+            svc.code,
+            style: const TextStyle(
+              fontSize: 38,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 8,
+              color: DF.accent,
+            ),
+          ),
+          const SizedBox(height: 14),
+          // Big and high-contrast so the viewer can scan it easily.
           Container(
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(16),
             ),
-            padding: const EdgeInsets.all(6),
+            padding: const EdgeInsets.all(12),
             child: QrImageView(
               data: PairingCode.qrPayload(svc.code),
-              size: 120,
+              size: 230,
               backgroundColor: Colors.white,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SectionLabel('Pairing code'),
-                const SizedBox(height: 6),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: SelectableText(
-                    svc.code,
-                    style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 5,
-                      color: DF.accent,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Scan in the Viewer app, or type this code.',
-                  style: TextStyle(color: DF.muted, fontSize: 12),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  svc.viewers == 1
-                      ? '1 viewer connected'
-                      : '${svc.viewers} viewers connected',
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                ),
-              ],
             ),
           ),
         ],

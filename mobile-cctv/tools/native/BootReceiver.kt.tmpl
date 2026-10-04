@@ -24,11 +24,12 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         if (action != Intent.ACTION_BOOT_COMPLETED &&
-            action != "android.intent.action.QUICKBOOT_POWERON"
+            action != "android.intent.action.QUICKBOOT_POWERON" &&
+            action != Intent.ACTION_MY_PACKAGE_REPLACED
         ) return
 
         val prefs = context.getSharedPreferences(Bridge.PREFS, Context.MODE_PRIVATE)
-        if (!prefs.getBoolean(Bridge.KEY_AUTOSTART, false)) return
+        if (!prefs.getBoolean(Bridge.KEY_AUTOSTART, true)) return
 
         if (Build.VERSION.SDK_INT <= 29) {
             try {

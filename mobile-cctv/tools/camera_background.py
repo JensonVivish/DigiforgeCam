@@ -58,6 +58,7 @@ if ".CameraForegroundService" not in m:
         '            <intent-filter>\n'
         '                <action android:name="android.intent.action.BOOT_COMPLETED" />\n'
         '                <action android:name="android.intent.action.QUICKBOOT_POWERON" />\n'
+        '                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />\n'
         '            </intent-filter>\n'
         '        </receiver>\n'
     )
