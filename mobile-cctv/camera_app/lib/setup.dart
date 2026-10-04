@@ -51,9 +51,8 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
     final s = _bg.status;
     if (!s.ok) return _cameraOk; // nothing native to ask for
     final batteryOk = s.sdk < 23 || s.batteryExempt;
-    final overlayOk = s.sdk < 30 || s.overlay;
     final vendorOk = !s.needsVendorStep || _bg.vendorDone;
-    return _cameraOk && s.notifications && batteryOk && overlayOk && vendorOk;
+    return _cameraOk && s.notifications && batteryOk && s.isHome && vendorOk;
   }
 
   /// Runs a step that opens a system screen, then waits until the user returns.
@@ -90,9 +89,10 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
         await _step(BackgroundBridge.requestBattery);
         s = _bg.status;
       }
-      // 4. Open itself after reboot on Android 11+
-      if (s.ok && s.sdk >= 30 && !s.overlay) {
-        await _step(BackgroundBridge.requestOverlay);
+      // 4. Startup app: be the phone's Home app, which Android always starts
+      //    after a reboot and relaunches if it gets killed
+      if (s.ok && !s.isHome) {
+        await _step(BackgroundBridge.requestHome);
         s = _bg.status;
       }
       // 5. Samsung / Realme auto-start screen (cannot be checked, so asked once)
@@ -128,7 +128,7 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
               const SizedBox(height: 8),
               const Text(
-                'So the camera keeps running in the background and starts by itself after a reboot.',
+                'So the camera keeps running in the background and starts by itself after every restart.',
                 style: TextStyle(color: DF.muted),
               ),
               const SizedBox(height: 20),
@@ -136,8 +136,10 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
               if (s.ok && s.sdk >= 33) _Row('Notifications', s.notifications),
               if (s.ok && s.sdk >= 23)
                 _Row('Keep running in background', s.batteryExempt),
-              if (s.ok && s.sdk >= 30)
-                _Row('Open after reboot (display over other apps)', s.overlay),
+              if (s.ok)
+                _Row('Startup app', s.isHome,
+                    hint: 'Choose DigiForge Camera as the Home app. '
+                        'The phone then opens it after every restart.'),
               if (s.ok && s.needsVendorStep)
                 _Row('Start after reboot', _bg.vendorDone,
                     hint: _vendorHint(s.manufacturer)),

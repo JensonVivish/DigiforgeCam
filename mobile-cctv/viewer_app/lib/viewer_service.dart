@@ -23,6 +23,7 @@ class ViewerService extends ChangeNotifier {
   Duration recElapsed = Duration.zero;
   String? error;
   String facing = ''; // 'environment' (back) or 'user' (front), reported by the camera
+  bool switching = false; // a switch request is in flight
   VoidCallback? onClipSaved;
 
   RTCPeerConnection? _pc;
@@ -42,6 +43,7 @@ class ViewerService extends ChangeNotifier {
   Timer? _presenceTimer;
   Timer? _recTimer;
   Timer? _statsTimer;
+  Timer? _switchTimer;
   RTCDataChannel? _dc;
   int _lastDecoded = -1;
   int _stall = 0;
@@ -168,6 +170,8 @@ class ViewerService extends ChangeNotifier {
         final t = m.text;
         if (t.startsWith('facing:')) {
           facing = t.substring(7);
+          switching = false;
+          _switchTimer?.cancel();
           _n();
         } else if (t == 'restart') {
           _scheduleRetry();
@@ -294,13 +298,26 @@ class ViewerService extends ChangeNotifier {
     _statsTimer?.cancel();
   }
 
-  /// Asks the camera to flip between back and front.
+  /// Asks the camera to use the other lens. The target is explicit (never a
+  /// blind toggle) and only one request runs at a time.
   void switchCamera() {
     final dc = _dc;
-    if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) return;
+    if (switching || dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    final target = facing == 'user' ? 'environment' : 'user';
+    switching = true;
+    _n();
     try {
-      dc.send(RTCDataChannelMessage('switch'));
-    } catch (_) {}
+      dc.send(RTCDataChannelMessage('set:$target'));
+    } catch (_) {
+      switching = false;
+    }
+    _switchTimer?.cancel();
+    _switchTimer = Timer(const Duration(seconds: 5), () {
+      switching = false;
+      _n();
+    });
   }
 
   /// If decoded frames stop for ~15s the picture is frozen: reconnect.
@@ -345,6 +362,8 @@ class ViewerService extends ChangeNotifier {
     _remote = null;
     _dc = null;
     facing = '';
+    switching = false;
+    _switchTimer?.cancel();
     renderer.srcObject = null;
     if (cam != null && sid != null) _safeDelete('cams/$cam/sessions/$sid');
     if (pc != null) {

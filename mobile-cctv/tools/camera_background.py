@@ -27,6 +27,18 @@ for out_name, tmpl in templates.items():
 mpath = "android/app/src/main/AndroidManifest.xml"
 m = open(mpath).read()
 
+# Let the app be chosen as the phone's Home (startup) app.
+if "android.intent.category.HOME" not in m:
+    home_filter = (
+        '            <intent-filter>\n'
+        '                <action android:name="android.intent.action.MAIN" />\n'
+        '                <category android:name="android.intent.category.HOME" />\n'
+        '                <category android:name="android.intent.category.DEFAULT" />\n'
+        '            </intent-filter>\n'
+    )
+    m = m.replace("</activity>", home_filter + "        </activity>", 1)
+m = m.replace('android:launchMode="singleTop"', 'android:launchMode="singleTask"')
+
 perms = [
     "FOREGROUND_SERVICE",
     "FOREGROUND_SERVICE_CAMERA",

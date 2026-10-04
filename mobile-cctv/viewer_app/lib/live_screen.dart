@@ -219,7 +219,7 @@ class _LiveScreenState extends State<LiveScreen> {
                   right: 10,
                   bottom: 10,
                   child: IconButton.filled(
-                    onPressed: svc.switchCamera,
+                    onPressed: svc.switching ? null : svc.switchCamera,
                     icon: const Icon(Icons.cameraswitch_rounded),
                     tooltip: 'Switch camera',
                   ),

@@ -10,7 +10,7 @@ class BgStatus {
     this.running = false,
     this.notifications = true,
     this.batteryExempt = false,
-    this.overlay = false,
+    this.isHome = false,
     this.manufacturer = '',
     this.sdk = 0,
   });
@@ -20,7 +20,9 @@ class BgStatus {
   final bool running;
   final bool notifications;
   final bool batteryExempt;
-  final bool overlay;
+
+  /// This app is the phone's Home (startup) app.
+  final bool isHome;
   final String manufacturer;
   final int sdk;
 
@@ -34,7 +36,7 @@ class BgStatus {
         running: m['running'] == true,
         notifications: m['notifications'] != false,
         batteryExempt: m['batteryExempt'] == true,
-        overlay: m['overlay'] == true,
+        isHome: m['isHome'] == true,
         manufacturer: (m['manufacturer'] as String?) ?? '',
         sdk: (m['sdk'] as int?) ?? 0,
       );
@@ -63,24 +65,22 @@ class BackgroundBridge {
   }
 
   static Future<bool> start(String text) => _call('start', {'text': text});
-  static Future<bool> setStatus(String text) => _call('setStatus', {'text': text});
   static Future<bool> requestNotifications() => _call('requestNotifications');
   static Future<bool> requestBattery() => _call('requestBatteryExemption');
-  static Future<bool> requestOverlay() => _call('requestOverlay');
+  static Future<bool> requestHome() => _call('requestHome');
   static Future<bool> openVendorSettings() => _call('openVendorSettings');
   static Future<bool> moveToBackground() => _call('moveToBackground');
   static Future<bool> consumeAutostartLaunch() => _call('consumeAutostartLaunch');
 }
 
-/// Keeps the foreground service running and its notification text current.
-/// There are no switches: background running is always on.
+/// Keeps the foreground service running. There are no switches: background
+/// running is always on.
 class BackgroundController extends ChangeNotifier {
   BackgroundController(this.svc);
 
   final CameraService svc;
   BgStatus status = const BgStatus();
   bool vendorDone = false;
-  String _lastText = '';
   bool _disposed = false;
 
   static const _kVendorDone = 'vendor_done';
@@ -93,7 +93,6 @@ class BackgroundController extends ChangeNotifier {
     final p = await SharedPreferences.getInstance();
     vendorDone = p.getBool(_kVendorDone) ?? false;
     svc.onReady = _onCameraReady;
-    svc.addListener(_onSvc);
     await refresh();
   }
 
@@ -109,18 +108,11 @@ class BackgroundController extends ChangeNotifier {
     _n();
   }
 
-  String get _text => svc.live
-      ? 'LIVE - ${svc.viewers} watching'
-      : 'Standby - waiting for a viewer';
-
   /// The camera is up: make sure the foreground service is running too.
   Future<void> _onCameraReady() async {
     await refresh();
-    _lastText = _text;
-    if (status.running) {
-      await BackgroundBridge.setStatus(_lastText);
-    } else {
-      await BackgroundBridge.start(_lastText);
+    if (!status.running) {
+      await BackgroundBridge.start('Camera is running');
       await refresh();
     }
     // Opened by the boot receiver (Android 11+ path): get out of the way.
@@ -130,17 +122,9 @@ class BackgroundController extends ChangeNotifier {
     }
   }
 
-  void _onSvc() {
-    if (status.running && _text != _lastText) {
-      _lastText = _text;
-      BackgroundBridge.setStatus(_lastText);
-    }
-  }
-
   @override
   void dispose() {
     _disposed = true;
-    svc.removeListener(_onSvc);
     super.dispose();
   }
 }

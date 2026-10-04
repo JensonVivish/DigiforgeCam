@@ -1,5 +1,6 @@
 package __PKG__
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -65,6 +66,24 @@ class CameraForegroundService : Service() {
         return START_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // Some phones stop the service when the app is swiped away from recents.
+        // Ask Android to start it again a moment later.
+        try {
+            val i = Intent(applicationContext, CameraForegroundService::class.java)
+            i.putExtra(EXTRA_TEXT, status)
+            val pi = if (Build.VERSION.SDK_INT >= 26) {
+                PendingIntent.getForegroundService(applicationContext, 3, i, Bridge.piFlags())
+            } else {
+                PendingIntent.getService(applicationContext, 3, i, Bridge.piFlags())
+            }
+            val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            am.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 1500, pi)
+        } catch (e: Exception) {
+        }
+    }
+
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -96,7 +115,7 @@ class CameraForegroundService : Service() {
         var running = false
 
         @Volatile
-        var status = "Standby - waiting for a viewer"
+        var status = "Camera is running"
 
         fun start(ctx: Context, text: String) {
             status = text

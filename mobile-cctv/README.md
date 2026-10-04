@@ -49,32 +49,32 @@ then `bash ../tools/prepare_android.sh "DigiForge Camera"`, then `flutter run`.
 3. On the viewer, tap **Record clip** to save an mp4 (Clips tab). Use the flip button to switch cameras.
 4. Next time, tap **Reconnect** on the Viewer home screen.
 
-## Camera app: background, reboot, permissions
+## Camera app: background, startup, permissions
 
 Built for older phones: Android 5.0 and up, tuned for Android 5 to 10 (Samsung and Realme included).
-There are no switches. On first launch the app asks for everything in one go (**Allow all**):
-camera and microphone, notifications (Android 13+), "keep running in background" (battery),
-"display over other apps" (Android 11+ only) and, on Samsung/Realme, the vendor auto-start screen.
+The camera screen shows only the pairing code and its QR: no preview, no switches.
 
-Then it just works:
+On first launch the app asks for everything in one go (**Allow all**): camera and microphone,
+notifications (Android 13+), "keep running in background" (battery), **startup app**, and on
+Samsung/Realme the vendor auto-start screen.
 
-- It runs as a foreground service, so the camera keeps streaming with the screen off, while you use
-  other apps, and after the app is swiped away. The notification shows LIVE / Standby; its **Stop**
-  button ends everything.
-- If Android kills the process, the service restarts and brings the camera back.
-- **Start after reboot:** on Android 10 and older the service starts straight from the boot broadcast
-  and brings the camera up with nothing on screen (with a screen lock, Android only sends the boot
-  broadcast after the first unlock). On Android 11+ the app opens itself and moves to the background.
+- **Startup app:** the app registers as a Home app. Choose **DigiForge Camera** as the Home app and the
+  phone itself opens it after every restart, whatever the phone maker's auto-start rules say, and
+  relaunches it if it gets killed. (Trade-off: the Home button now shows the camera app. To undo,
+  Settings > Apps > Default apps > Home app.)
+- **Background:** a foreground service keeps the camera streaming with the screen off, while you use other
+  apps, and after the app is swiped away. If the phone kills it anyway, it asks Android to start it again.
+  Notification **Stop** ends everything.
+- **Boot broadcast:** on Android 10 and older the service also starts straight from the boot broadcast.
 - **Samsung:** also add DigiForge Camera to the apps that never sleep (Device care / Battery > App power management).
-  **Realme:** turn on Auto launch and allow background activity (App management). Android does not let
-  apps flip these switches themselves; the Allow-all step opens the right screen.
-- **Self-healing:** if the video freezes (the camera silently stalls on some phones), the camera
-  detects the missing frames within ~20 s, restarts itself, and the viewer reconnects automatically.
-  The viewer also reconnects by itself if the picture freezes for ~15 s.
+  **Realme:** turn on Auto launch and allow background activity (App management).
+- **Self-healing:** if the video freezes, the camera detects the missing frames within ~20 s, restarts
+  itself, and the viewer reconnects automatically. The viewer also reconnects if the picture freezes for ~15 s.
 
-**Front and back camera:** the camera app has a flip button on its preview, and the viewer has the same
-button on the live video. Flipping from the viewer is sent to the camera over the peer-to-peer
-connection. Old phones cannot open both cameras at the same time, so it switches rather than showing both at once.
+**Front and back camera:** switch from the viewer with the flip button on the live video. The request
+travels over the peer-to-peer connection with an explicit target (front or back), one at a time, and the
+camera reports which lens is really active. Old phones cannot open both cameras at once, so it switches
+rather than showing both together.
 
 The camera captures at 640x480, 15 fps to keep older phones, battery and mobile data happy.
 Change `kCaptureWidth/Height/Fps` in `camera_app/lib/camera_service.dart` for more quality.

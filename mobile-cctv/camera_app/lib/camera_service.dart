@@ -11,15 +11,13 @@ const int kCaptureFps = 15;
 
 /// Camera side: captures video+audio, publishes presence, answers viewer offers
 /// through Firebase RTDB signaling, then streams peer-to-peer.
-/// Started from main(), not from a widget, so it also runs with no screen.
+/// No preview and no UI state: it is started from main() and also runs with no screen.
 class CameraService extends ChangeNotifier {
   final Rtdb _db = Rtdb();
-  final RTCVideoRenderer renderer = RTCVideoRenderer();
 
   String code = '------';
   MediaStream? stream;
   String? error;
-  int viewers = 0;
   String facing = 'environment'; // 'environment' = back, 'user' = front
   VoidCallback? onReady; // fired once, when the camera first comes up
   bool _readyFired = false;
@@ -36,14 +34,14 @@ class CameraService extends ChangeNotifier {
   Timer? _beat;
   Timer? _watch;
   bool _polling = false;
-  bool _rendererReady = false;
   bool _disposed = false;
   bool _restarting = false;
+  bool _switching = false;
   Future<bool>? _opening;
   int _lastFrames = -1;
   int _stalls = 0;
 
-  bool get live => viewers > 0;
+  int get viewers => _connected.length;
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -52,10 +50,6 @@ class CameraService extends ChangeNotifier {
   Future<void> start() async {
     error = null;
     code = await PairingCode.loadOrCreate();
-    if (!_rendererReady) {
-      await renderer.initialize();
-      _rendererReady = true;
-    }
     _notify();
 
     final ok = await ensureCamera();
@@ -95,7 +89,6 @@ class CameraService extends ChangeNotifier {
         },
       }).timeout(const Duration(seconds: 25));
       stream = s;
-      renderer.srcObject = s;
       error = null;
       _notify();
       return true;
@@ -110,7 +103,6 @@ class CameraService extends ChangeNotifier {
     final s = stream;
     if (s == null) return;
     stream = null;
-    renderer.srcObject = null;
     for (final t in s.getTracks()) {
       try {
         await t.stop();
@@ -122,18 +114,35 @@ class CameraService extends ChangeNotifier {
     _notify();
   }
 
-  /// Flip between the back and front camera (works while streaming).
-  Future<void> switchFacing() async {
+  /// Switch to the 'user' (front) or 'environment' (back) camera.
+  /// The target is explicit, so a repeated or duplicated command can never
+  /// flip the camera back by accident, and only one switch runs at a time.
+  Future<void> setFacing(String want) async {
+    if (want != 'user' && want != 'environment') return;
+    if (_switching) return;
+    if (want == facing) {
+      _broadcastFacing();
+      return;
+    }
     final s = stream;
     if (s == null || s.getVideoTracks().isEmpty) return;
+    _switching = true;
     try {
-      await Helper.switchCamera(s.getVideoTracks().first);
-      facing = facing == 'environment' ? 'user' : 'environment';
-      for (final ch in _channels.values) {
-        _sendFacing(ch);
-      }
-      _notify();
-    } catch (_) {}
+      // The platform answers with the camera that is really active now.
+      final isFront = await Helper.switchCamera(s.getVideoTracks().first);
+      facing = isFront ? 'user' : 'environment';
+    } catch (_) {
+      // keep the previous value
+    } finally {
+      _switching = false;
+      _broadcastFacing();
+    }
+  }
+
+  void _broadcastFacing() {
+    for (final ch in _channels.values) {
+      _sendFacing(ch);
+    }
   }
 
   void _sendFacing(RTCDataChannel ch) {
@@ -144,10 +153,10 @@ class CameraService extends ChangeNotifier {
 
   // ---- Self-healing -----------------------------------------------------
 
-  /// If the camera silently freezes (it happens on some phones in the
-  /// background), the encoder stops producing frames. Detect that and restart.
+  /// If the camera silently freezes, the encoder stops producing frames.
+  /// Detect that and restart the camera.
   Future<void> _watchdog() async {
-    if (_disposed || _restarting || viewers == 0) {
+    if (_disposed || _restarting || _switching || viewers == 0) {
       _lastFrames = -1;
       _stalls = 0;
       return;
@@ -213,7 +222,7 @@ class CameraService extends ChangeNotifier {
     try {
       await _db.put('cams/$code/presence', {
         'ts': {'.sv': 'timestamp'},
-        'state': live ? 'live' : 'standby',
+        'state': viewers > 0 ? 'live' : 'standby',
       });
     } catch (_) {}
   }
@@ -295,11 +304,17 @@ class CameraService extends ChangeNotifier {
         });
       };
 
-      // Control channel from the viewer (switch camera).
+      // Control channel from the viewer (front/back camera).
       pc.onDataChannel = (RTCDataChannel ch) {
         _channels[sid] = ch;
         ch.onMessage = (RTCDataChannelMessage m) {
-          if (!m.isBinary && m.text == 'switch') switchFacing();
+          if (m.isBinary) return;
+          final t = m.text;
+          if (t.startsWith('set:')) {
+            setFacing(t.substring(4));
+          } else if (t == 'switch') {
+            setFacing(facing == 'environment' ? 'user' : 'environment');
+          }
         };
         ch.onDataChannelState = (RTCDataChannelState st) {
           if (st == RTCDataChannelState.RTCDataChannelOpen) _sendFacing(ch);
@@ -351,7 +366,6 @@ class CameraService extends ChangeNotifier {
   }
 
   void _syncViewers() {
-    viewers = _connected.length;
     _notify();
     _beatNow();
   }
@@ -385,7 +399,6 @@ class CameraService extends ChangeNotifier {
     _peers.clear();
     stream?.getTracks().forEach((t) => t.stop());
     stream?.dispose();
-    renderer.dispose();
     super.dispose();
   }
 }
