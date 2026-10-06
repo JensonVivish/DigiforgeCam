@@ -80,6 +80,16 @@ The camera captures at 640x480, 15 fps to keep older phones, battery and mobile 
 Change `kCaptureWidth/Height/Fps` in `camera_app/lib/camera_service.dart` for more quality.
 The camera always stays on while the service runs, so keep the camera phone plugged in.
 
+## Troubleshooting: "background service is not available"
+
+The camera app's native part (service, boot receiver, Home app) is added during the build by
+`tools/prepare_android.sh` -> `tools/camera_background.py` (using `tools/native/*.tmpl`).
+In the **Build APKs** log, step "Generate Android project", you should see
+`Applying camera background patch...` and several `wrote .../Bridge.kt` lines.
+If they are missing, `mobile-cctv/tools` (including `tools/native`) was not fully uploaded.
+Note: folders starting with a dot, such as `.github`, are hidden by many file managers and
+skipped by drag-and-drop uploads; this project no longer relies on the workflow file for the patch.
+
 ## Optional: TURN relay for strict networks
 
 In the Firebase console add a node `config/turn`:

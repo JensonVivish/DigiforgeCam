@@ -6,6 +6,8 @@ import re
 import sys
 
 here = os.path.dirname(os.path.abspath(__file__))
+if not os.path.isdir(os.path.join(here, "native")):
+    sys.exit("tools/native is missing - upload the whole mobile-cctv/tools folder")
 acts = glob.glob("android/app/src/main/kotlin/**/MainActivity.kt", recursive=True)
 if not acts:
     sys.exit("MainActivity.kt not found - run `flutter create` first")

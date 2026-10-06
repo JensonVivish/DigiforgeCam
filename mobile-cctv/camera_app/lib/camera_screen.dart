@@ -21,10 +21,9 @@ class CameraScreen extends StatelessWidget {
           children: [
             const ConfigNotice(),
             if (!bg.status.ok)
-              const _Warn(
-                'The background service is missing from this build, so the camera '
-                'will stop when the app is closed. Upload the whole mobile-cctv '
-                'folder (including tools/native) and run Build APKs again.',
+              _Warn(
+                'The background service is not available in this build, so the camera '
+                'will stop when the app is closed.\n\nReason: ${bg.status.error}',
               ),
             if (svc.error != null) _Warn(svc.error!),
             DFCard(

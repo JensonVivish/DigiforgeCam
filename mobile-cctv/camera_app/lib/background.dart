@@ -7,6 +7,7 @@ import 'camera_service.dart';
 class BgStatus {
   const BgStatus({
     this.ok = true,
+    this.error = '',
     this.running = false,
     this.notifications = true,
     this.batteryExempt = false,
@@ -17,6 +18,7 @@ class BgStatus {
 
   /// False when the native side is missing from this build (channel not answering).
   final bool ok;
+  final String error;
   final bool running;
   final bool notifications;
   final bool batteryExempt;
@@ -58,9 +60,11 @@ class BackgroundBridge {
   static Future<BgStatus> status() async {
     try {
       final m = await _ch.invokeMapMethod<String, dynamic>('status');
-      return m == null ? const BgStatus(ok: false) : BgStatus.fromMap(m);
-    } catch (_) {
-      return const BgStatus(ok: false);
+      return m == null
+          ? const BgStatus(ok: false, error: 'no answer from the native side')
+          : BgStatus.fromMap(m);
+    } catch (e) {
+      return BgStatus(ok: false, error: e.toString());
     }
   }
 

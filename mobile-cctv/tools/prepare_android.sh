@@ -29,3 +29,10 @@ done
 
 # Keep the screen on while the app is open (native flag, no plugin needed).
 python3 "$(dirname "$0")/patch_main_activity.py"
+
+# Camera app only: add the background service, boot receiver and Home-app support.
+# Done here (not only in the workflow) so it works with any version of the workflow file.
+if grep -q "^name: digiforge_cctv_camera" pubspec.yaml; then
+  echo "Applying camera background patch..."
+  python3 "$(dirname "$0")/camera_background.py"
+fi
