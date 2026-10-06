@@ -41,6 +41,10 @@ jobs:
           flutter create --platforms=android --org com.digiforgedynamics --project-name ${{ matrix.pkg }} .
           rm -rf test
           bash ../tools/prepare_android.sh "${{ matrix.label }}"
+          if [ "${{ matrix.app }}" = "camera_app" ]; then
+            [ -f ../tools/camera_background.py ] && [ -f ../tools/native/Bridge.kt.tmpl ] || { echo "tools/ is incomplete - upload the whole mobile-cctv folder (including tools/native)"; exit 1; }
+            python3 ../tools/camera_background.py
+          fi
 
       - name: Build release APK
         working-directory: mobile-cctv/${{ matrix.app }}
