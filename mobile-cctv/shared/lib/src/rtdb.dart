@@ -32,6 +32,23 @@ class Rtdb {
     _check(r, 'PUT', path);
   }
 
+  /// PUT that returns what the server stored. With a server value such as
+  /// {".sv": "timestamp"} this is the server's current time in milliseconds.
+  Future<dynamic> putGet(String path, Object? data) async {
+    final r = await _client.put(_uri(path), body: jsonEncode(data)).timeout(_timeout);
+    _check(r, 'PUT', path);
+    return jsonDecode(r.body);
+  }
+
+  /// Child keys of [path] without downloading the data below them.
+  Future<List<String>> getShallow(String path) async {
+    final uri = Uri.parse('$_base/$path.json?shallow=true');
+    final r = await _client.get(uri).timeout(_timeout);
+    _check(r, 'GET', path);
+    final j = jsonDecode(r.body);
+    return j is Map ? j.keys.map((k) => k.toString()).toList() : <String>[];
+  }
+
   /// Appends [data] under a new unique key and returns that key.
   Future<String?> push(String path, Object? data) async {
     final r = await _client.post(_uri(path), body: jsonEncode(data)).timeout(_timeout);

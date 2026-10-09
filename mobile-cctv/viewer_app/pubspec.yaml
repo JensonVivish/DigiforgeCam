@@ -12,7 +12,6 @@ dependencies:
   digiforge_shared:
     path: ../shared
   flutter_webrtc: ^0.12.9
-  mobile_scanner: ^5.2.3
 
 dev_dependencies:
   flutter_lints: ^4.0.0

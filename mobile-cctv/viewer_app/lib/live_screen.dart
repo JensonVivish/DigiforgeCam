@@ -2,7 +2,6 @@ import 'package:digiforge_shared/digiforge_shared.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
-import 'scan_screen.dart';
 import 'viewer_service.dart';
 
 String _mmss(Duration d) {
@@ -11,43 +10,9 @@ String _mmss(Duration d) {
   return '$m:$s';
 }
 
-class LiveScreen extends StatefulWidget {
+class LiveScreen extends StatelessWidget {
   const LiveScreen({super.key, required this.svc});
   final ViewerService svc;
-
-  @override
-  State<LiveScreen> createState() => _LiveScreenState();
-}
-
-class _LiveScreenState extends State<LiveScreen> {
-  final TextEditingController _ctrl = TextEditingController();
-  String? _err;
-
-  ViewerService get svc => widget.svc;
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _scan() async {
-    final code = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const ScanScreen()),
-    );
-    if (code != null) svc.connect(code);
-  }
-
-  void _typed() {
-    final code = PairingCode.parse(_ctrl.text);
-    if (code == null) {
-      setState(() => _err = 'Enter the 6-character code');
-      return;
-    }
-    setState(() => _err = null);
-    FocusScope.of(context).unfocus();
-    svc.connect(code);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,80 +23,63 @@ class _LiveScreenState extends State<LiveScreen> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: [
             const ConfigNotice(),
-            if (svc.state == ViewerState.idle) ..._pairing() else ..._watching(),
+            if (svc.state == ViewerState.idle) ..._channelList() else ..._watching(),
           ],
         );
       },
     );
   }
 
-  List<Widget> _pairing() {
-    final last = svc.lastCode;
+  List<Widget> _channelList() {
     return [
-      if (last != null) ...[
-        DFCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SectionLabel('Last camera'),
-              const SizedBox(height: 6),
-              Text(last,
-                  style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 6,
-                      color: DF.accent)),
-              const SizedBox(height: 14),
-              FilledButton.icon(
-                onPressed: () => svc.connect(last),
-                icon: const Icon(Icons.play_arrow_rounded),
-                label: const Text('Reconnect'),
-              ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                    onPressed: svc.forgetLast, child: const Text('Forget this camera')),
-              ),
-            ],
+      const Padding(
+        padding: EdgeInsets.only(bottom: 12),
+        child: Text('Cameras',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+      ),
+      if (svc.listError != null)
+        Text(svc.listError!, style: const TextStyle(color: DF.danger)),
+      if (svc.scanning && svc.channels.isEmpty)
+        const Padding(
+          padding: EdgeInsets.all(32),
+          child: Center(child: CircularProgressIndicator()),
+        )
+      else if (svc.channels.isEmpty && svc.listError == null)
+        const Padding(
+          padding: EdgeInsets.all(32),
+          child: Text(
+            'No cameras online.\nMake sure the camera app has been set up and the phone is connected to the internet.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: DF.muted),
           ),
         ),
-        const SizedBox(height: 16),
-      ],
-      DFCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SectionLabel('Pair a camera'),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _scan,
-              icon: const Icon(Icons.qr_code_scanner_rounded),
-              label: const Text('Scan QR code'),
+      for (final c in svc.channels)
+        Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          decoration: BoxDecoration(
+            color: DF.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: DF.line),
+          ),
+          child: ListTile(
+            leading: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: DF.accentSoft,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.videocam_rounded, color: DF.accent),
             ),
-            const SizedBox(height: 14),
-            const Center(
-                child: Text('or enter the code', style: TextStyle(color: DF.muted))),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _ctrl,
-              maxLength: 6,
-              textCapitalization: TextCapitalization.characters,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                  fontSize: 24, fontWeight: FontWeight.w700, letterSpacing: 6),
-              decoration: InputDecoration(
-                  hintText: 'A3K8PZ', errorText: _err, counterText: ''),
-              onSubmitted: (_) => _typed(),
+            title: Text(c.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text(c.watching ? 'In use - someone is watching' : 'Ready - camera is off',
+                style: const TextStyle(color: DF.muted)),
+            trailing: FilledButton(
+              style: FilledButton.styleFrom(minimumSize: const Size(96, 40)),
+              onPressed: () => svc.connect(c.code),
+              child: const Text('Turn on'),
             ),
-            const SizedBox(height: 12),
-            FilledButton(onPressed: _typed, child: const Text('Connect')),
-          ],
-        ),
-      ),
-      if (svc.error != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: Text(svc.error!, style: const TextStyle(color: DF.danger)),
+          ),
         ),
     ];
   }
@@ -141,10 +89,10 @@ class _LiveScreenState extends State<LiveScreen> {
     final String status;
     switch (svc.state) {
       case ViewerState.live:
-        status = 'Live from ${svc.target}';
+        status = 'Live';
         break;
       case ViewerState.connecting:
-        status = 'Connecting to ${svc.target}...';
+        status = 'Turning on camera...';
         break;
       default:
         status = svc.retryIn > 0
@@ -194,7 +142,7 @@ class _LiveScreenState extends State<LiveScreen> {
                 top: 12,
                 left: 12,
                 child: StatusBadge(
-                  label: live ? 'LIVE' : 'CONNECTING',
+                  label: live ? 'LIVE' : 'STARTING',
                   color: live ? DF.danger : DF.warn,
                 ),
               ),
@@ -258,8 +206,8 @@ class _LiveScreenState extends State<LiveScreen> {
       const SizedBox(height: 10),
       OutlinedButton.icon(
         onPressed: svc.disconnect,
-        icon: const Icon(Icons.close_rounded),
-        label: const Text('Disconnect'),
+        icon: const Icon(Icons.power_settings_new_rounded),
+        label: const Text('Turn off camera'),
       ),
       if (svc.error != null)
         Padding(

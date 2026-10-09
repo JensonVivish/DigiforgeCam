@@ -7,6 +7,14 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 enum ViewerState { idle, connecting, live, reconnecting }
 
+/// A camera that is online and can be watched.
+class Channel {
+  const Channel(this.code, this.name, this.watching);
+  final String code;
+  final String name;
+  final bool watching;
+}
+
 /// Viewer side: offers to the camera through Firebase RTDB signaling, then
 /// receives the stream peer-to-peer. Reconnects forever with capped backoff.
 class ViewerService extends ChangeNotifier {
@@ -24,6 +32,12 @@ class ViewerService extends ChangeNotifier {
   String? error;
   String facing = ''; // 'environment' (back) or 'user' (front), reported by the camera
   bool switching = false; // a switch request is in flight
+  List<Channel> channels = [];
+  bool scanning = true; // first look-up not finished yet
+  String? listError;
+  Timer? _listTimer;
+  bool _listBusy = false;
+  final Map<String, int> _missing = {};
   VoidCallback? onClipSaved;
 
   RTCPeerConnection? _pc;
@@ -61,12 +75,14 @@ class ViewerService extends ChangeNotifier {
     await renderer.initialize();
     lastCode = await PairingCode.loadLast();
     _n();
+    _startListing();
   }
 
   // ---- Public controls --------------------------------------------------
 
   Future<void> connect(String code) async {
     error = null;
+    _stopListing();
     _want = true;
     target = code;
     attempt = 0;
@@ -87,6 +103,7 @@ class ViewerService extends ChangeNotifier {
     _cancelPeerTimers();
     await _teardownPeer();
     state = ViewerState.idle;
+    _startListing();
     target = null;
     cameraOnline = null;
     retryIn = 0;
@@ -96,6 +113,73 @@ class ViewerService extends ChangeNotifier {
   Future<void> forgetLast() async {
     await PairingCode.forgetLast();
     lastCode = null;
+    _n();
+  }
+
+  // ---- Available cameras ------------------------------------------------
+
+  void _startListing() {
+    _listTimer?.cancel();
+    refreshChannels();
+    _listTimer = Timer.periodic(const Duration(seconds: 4), (_) => refreshChannels());
+  }
+
+  void _stopListing() {
+    _listTimer?.cancel();
+  }
+
+  /// Lists every camera that is online. "Online" is judged against the
+  /// server's clock, so it does not matter what time the phones think it is.
+  Future<void> refreshChannels() async {
+    if (_listBusy || _disposed) return;
+    _listBusy = true;
+    try {
+      dynamic now = await _db.putGet('cams/_time', {'.sv': 'timestamp'});
+      if (now is! num) now = await _db.get('cams/_time');
+      final int? nowMs = now is num ? now.toInt() : null;
+      final keys = await _db.getShallow('cams');
+      final found = <Channel>[];
+      final stale = <String>[];
+      await Future.wait(keys.where((k) => !k.startsWith('_')).map((k) async {
+        try {
+          final p = await _db.get('cams/$k/presence');
+          final ts = (p is Map) ? p['ts'] : null;
+          if (ts is! num || nowMs == null) {
+            // No heartbeat at all: leftover data. Clean it up if it stays that way.
+            final n = (_missing[k] ?? 0) + 1;
+            _missing[k] = n;
+            if (n >= 3) stale.add(k);
+            return;
+          }
+          _missing.remove(k);
+          final age = nowMs - ts.toInt();
+          if (age > 24 * 60 * 60 * 1000) {
+            stale.add(k); // offline for over a day
+            return;
+          }
+          if (age > 20000) return; // offline right now
+          found.add(Channel(
+            k,
+            ((p as Map)['name'] as String?) ?? 'Camera $k',
+            p['state'] == 'live',
+          ));
+        } catch (_) {}
+      }));
+      // Cleanup: remove cameras that are long gone (they recreate themselves if they return).
+      for (final k in stale) {
+        _missing.remove(k);
+        try {
+          await _db.delete('cams/$k');
+        } catch (_) {}
+      }
+      found.sort((a, b) => a.name.compareTo(b.name));
+      channels = found;
+      listError = null;
+    } catch (_) {
+      listError = 'Cannot reach the server. Check your internet connection.';
+    }
+    scanning = false;
+    _listBusy = false;
     _n();
   }
 
@@ -502,6 +586,7 @@ class ViewerService extends ChangeNotifier {
     _retryTimer?.cancel();
     _presenceTimer?.cancel();
     _recTimer?.cancel();
+    _listTimer?.cancel();
     _cancelPeerTimers();
     _pc?.close();
     renderer.dispose();

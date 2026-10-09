@@ -81,6 +81,10 @@ object Bridge {
                 launch(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(ctx)))
             )
             "requestHome" -> result.success(requestHome(ctx))
+            "closeApp" -> {
+                activity?.finishAndRemoveTask()
+                result.success(true)
+            }
             "openVendorSettings" -> result.success(openVendorSettings(ctx))
             "consumeAutostartLaunch" -> {
                 val v = autostartLaunch
@@ -119,6 +123,9 @@ object Bridge {
             "isHome" to isHomeApp(ctx),
             "autostart" to prefs(ctx).getBoolean(KEY_AUTOSTART, true),
             "manufacturer" to Build.MANUFACTURER.lowercase(),
+            "model" to Build.MODEL,
+            "camera" to granted(ctx, "android.permission.CAMERA"),
+            "mic" to granted(ctx, "android.permission.RECORD_AUDIO"),
             "sdk" to sdk
         )
     }
@@ -148,6 +155,11 @@ object Bridge {
         val home = Intent(Intent.ACTION_MAIN)
         home.addCategory(Intent.CATEGORY_HOME)
         return launch(ctx, home)
+    }
+
+    private fun granted(ctx: Context, perm: String): Boolean {
+        if (Build.VERSION.SDK_INT < 23) return true
+        return ctx.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun launch(ctx: Context, intent: Intent): Boolean {

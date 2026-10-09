@@ -11,21 +11,25 @@ class BgStatus {
     this.running = false,
     this.notifications = true,
     this.batteryExempt = false,
-    this.isHome = false,
+    this.overlay = true,
+    this.camera = true,
+    this.mic = true,
     this.manufacturer = '',
+    this.model = '',
     this.sdk = 0,
   });
 
-  /// False when the native side is missing from this build (channel not answering).
+  /// False when the native side is not available in this build.
   final bool ok;
   final String error;
   final bool running;
   final bool notifications;
   final bool batteryExempt;
-
-  /// This app is the phone's Home (startup) app.
-  final bool isHome;
+  final bool overlay;
+  final bool camera;
+  final bool mic;
   final String manufacturer;
+  final String model;
   final int sdk;
 
   bool get needsVendorStep =>
@@ -38,8 +42,11 @@ class BgStatus {
         running: m['running'] == true,
         notifications: m['notifications'] != false,
         batteryExempt: m['batteryExempt'] == true,
-        isHome: m['isHome'] == true,
+        overlay: m['overlay'] != false,
+        camera: m['camera'] != false,
+        mic: m['mic'] != false,
         manufacturer: (m['manufacturer'] as String?) ?? '',
+        model: (m['model'] as String?) ?? '',
         sdk: (m['sdk'] as int?) ?? 0,
       );
 }
@@ -71,14 +78,13 @@ class BackgroundBridge {
   static Future<bool> start(String text) => _call('start', {'text': text});
   static Future<bool> requestNotifications() => _call('requestNotifications');
   static Future<bool> requestBattery() => _call('requestBatteryExemption');
-  static Future<bool> requestHome() => _call('requestHome');
+  static Future<bool> requestOverlay() => _call('requestOverlay');
   static Future<bool> openVendorSettings() => _call('openVendorSettings');
-  static Future<bool> moveToBackground() => _call('moveToBackground');
+  static Future<bool> closeApp() => _call('closeApp');
   static Future<bool> consumeAutostartLaunch() => _call('consumeAutostartLaunch');
 }
 
-/// Keeps the foreground service running. There are no switches: background
-/// running is always on.
+/// Keeps the foreground service running. No switches: always on.
 class BackgroundController extends ChangeNotifier {
   BackgroundController(this.svc);
 
@@ -102,6 +108,7 @@ class BackgroundController extends ChangeNotifier {
 
   Future<void> refresh() async {
     status = await BackgroundBridge.status();
+    if (status.ok) svc.setDeviceName(status.manufacturer, status.model);
     _n();
   }
 
@@ -116,13 +123,13 @@ class BackgroundController extends ChangeNotifier {
   Future<void> _onCameraReady() async {
     await refresh();
     if (!status.running) {
-      await BackgroundBridge.start('Camera is running');
+      await BackgroundBridge.start('Ready - the camera turns on when you watch');
       await refresh();
     }
-    // Opened by the boot receiver (Android 11+ path): get out of the way.
+    // Opened by the boot receiver (Android 11+): close again, nobody needs to see it.
     if (await BackgroundBridge.consumeAutostartLaunch()) {
-      await Future<void>.delayed(const Duration(seconds: 4));
-      await BackgroundBridge.moveToBackground();
+      await Future<void>.delayed(const Duration(seconds: 3));
+      await BackgroundBridge.closeApp();
     }
   }
 

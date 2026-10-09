@@ -28,13 +28,6 @@ class MainActivity : FlutterActivity() {
         if (intent != null && intent.getBooleanExtra(Bridge.EXTRA_AUTOSTART, false)) {
             Bridge.autostartLaunch = true
         }
-
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission("android.permission.POST_NOTIFICATIONS") !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 11)
-        }
     }
 
     override fun onNewIntent(intent: Intent) {

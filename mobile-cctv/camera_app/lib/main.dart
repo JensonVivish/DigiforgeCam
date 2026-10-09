@@ -1,7 +1,6 @@
 import 'package:digiforge_shared/digiforge_shared.dart';
 import 'package:flutter/material.dart';
 
-import 'camera_screen.dart';
 import 'runtime.dart';
 import 'setup.dart';
 
@@ -21,19 +20,7 @@ class CameraApp extends StatelessWidget {
       title: 'DigiForge Camera',
       debugShowCheckedModeBanner: false,
       theme: dfTheme(),
-      home: const SetupGate(child: _Home()),
-    );
-  }
-}
-
-class _Home extends StatelessWidget {
-  const _Home();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(toolbarHeight: 64, title: const BrandTitle('CAMERA')),
-      body: CameraScreen(svc: cameraService, bg: backgroundController),
+      home: const SetupGate(),
     );
   }
 }

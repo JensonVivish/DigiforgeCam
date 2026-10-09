@@ -43,42 +43,50 @@ then `bash ../tools/prepare_android.sh "DigiForge Camera"`, then `flutter run`.
 
 ## 3. Use it
 
-1. Open **DigiForge Camera** on the spare phone, allow camera + microphone, plug it in and leave the app open.
-   It shows a permanent 6-character code and a QR.
-2. Open **DigiForge Viewer** on your phone, tap **Scan QR code** (or type the code), and you are live.
-3. On the viewer, tap **Record clip** to save an mp4 (Clips tab). Use the flip button to switch cameras.
-4. Next time, tap **Reconnect** on the Viewer home screen.
+1. Install **DigiForge Camera** on the spare phone, open it once and tap **Allow all**. When everything is allowed
+   it closes itself; the camera keeps running in the background and starts by itself after a restart.
+2. Open **DigiForge Viewer**. It lists every camera that is online. Tap one to watch.
+3. On the viewer, tap **Record clip** to save an mp4 (Clips tab). Use the flip button to switch front/back camera.
+
+There is no pairing code or QR in this prototype: every camera that is online shows up in the viewer.
 
 ## Camera app: background, startup, permissions
 
 Built for older phones: Android 5.0 and up, tuned for Android 5 to 10 (Samsung and Realme included).
-The camera screen shows only the pairing code and its QR: no preview, no switches.
 
-On first launch the app asks for everything in one go (**Allow all**): camera and microphone,
-notifications (Android 13+), "keep running in background" (battery), **startup app**, and on
-Samsung/Realme the vendor auto-start screen.
+- **Camera and mic are off until you ask.** The camera app runs all the time (a light foreground service that
+  only watches for requests), but the camera and microphone only turn on when you press **Turn on** in the
+  viewer, and turn off again when you press **Turn off camera** (or ~15 s after the last viewer leaves).
+  The second phone idles at very low battery use. Turning on takes a second or two.
+- **One-time setup, no Settings app:** the camera app opens, shows Android's own permission dialogs one after
+  another (camera, microphone, notifications on Android 13+, keep running in background); tap Allow on each.
+  Then it closes itself. Opening it again just closes it again. Android itself requires a tap on each dialog;
+  an app cannot grant these on its own.
+- **Background:** a foreground service keeps the app alive with the screen off and after it is swiped away. If the
+  phone kills it anyway, it asks Android to start it again. The notification's **Stop** button ends everything.
+- **Start after restart:** on Android 10 and older the service starts from the boot broadcast with nothing on
+  screen. On Android 11+ the app opens briefly and closes itself. On some phones (notably Realme) Android blocks
+  apps from starting at boot unless "Auto launch / Autostart" is allowed for the app in the phone's own settings;
+  an app cannot switch that on itself, so if the camera is not listed in the viewer after a restart, check that setting once.
+- **Another camera app takes the camera:** the stream stops; the viewer keeps reconnecting and the camera app
+  takes the camera back as soon as it is free. A frozen picture is detected within ~15 s and the camera restarts.
+- **Front/back camera:** switch from the viewer. The request has an explicit target, runs one at a time, and the
+  camera reports which lens is active. Old phones cannot open both lenses at once.
+- **Firebase cleanup:** the viewer removes cameras that have been offline for over a day (or that only left
+  stray data behind). A camera recreates its entry by itself when it comes back.
 
-- **Startup app:** the app registers as a Home app. Choose **DigiForge Camera** as the Home app and the
-  phone itself opens it after every restart, whatever the phone maker's auto-start rules say, and
-  relaunches it if it gets killed. (Trade-off: the Home button now shows the camera app. To undo,
-  Settings > Apps > Default apps > Home app.)
-- **Background:** a foreground service keeps the camera streaming with the screen off, while you use other
-  apps, and after the app is swiped away. If the phone kills it anyway, it asks Android to start it again.
-  Notification **Stop** ends everything.
-- **Boot broadcast:** on Android 10 and older the service also starts straight from the boot broadcast.
-- **Samsung:** also add DigiForge Camera to the apps that never sleep (Device care / Battery > App power management).
-  **Realme:** turn on Auto launch and allow background activity (App management).
-- **Self-healing:** if the video freezes, the camera detects the missing frames within ~20 s, restarts
-  itself, and the viewer reconnects automatically. The viewer also reconnects if the picture freezes for ~15 s.
+The camera captures at 640x480, 15 fps. Change `kCaptureWidth/Height/Fps` in `camera_app/lib/camera_service.dart`.
 
-**Front and back camera:** switch from the viewer with the flip button on the live video. The request
-travels over the peer-to-peer connection with an explicit target (front or back), one at a time, and the
-camera reports which lens is really active. Old phones cannot open both cameras at once, so it switches
-rather than showing both together.
+## Test checklist (on real phones)
 
-The camera captures at 640x480, 15 fps to keep older phones, battery and mobile data happy.
-Change `kCaptureWidth/Height/Fps` in `camera_app/lib/camera_service.dart` for more quality.
-The camera always stays on while the service runs, so keep the camera phone plugged in.
+1. Install both apps. Camera phone: open the camera app, tap Allow on each dialog; it should say All set and close.
+2. Viewer: the camera appears in the list (model name) within ~5 s. Press **Turn on**: video + sound within a few seconds.
+   Press **Turn off camera**: the camera light on the camera phone goes off within ~15 s.
+3. Background: with the camera on, lock the camera phone and wait 5 minutes: video must keep going.
+4. Swipe the camera app away from recents: it should still be listed and Turn on should still work.
+5. Restart the camera phone (unlock once if it has a lock screen): it should appear in the viewer list without opening the app.
+6. While watching, open another camera app on the camera phone, then leave it: the viewer should reconnect by itself.
+7. Flip front/back from the viewer a few times: it must stay on the lens you chose.
 
 ## Troubleshooting: "background service is not available"
 

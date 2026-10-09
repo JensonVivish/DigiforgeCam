@@ -19,9 +19,12 @@ class CameraService extends ChangeNotifier {
   MediaStream? stream;
   String? error;
   String facing = 'environment'; // 'environment' = back, 'user' = front
+  String deviceName = 'Camera';
   VoidCallback? onReady; // fired once, when the camera first comes up
   bool _readyFired = false;
   bool started = false;
+  bool accessGranted = false; // camera + mic permission has been given
+  DateTime _lastActive = DateTime.now();
 
   final Map<String, RTCPeerConnection> _peers = {};
   final Map<String, RTCDataChannel> _channels = {};
@@ -43,6 +46,14 @@ class CameraService extends ChangeNotifier {
 
   int get viewers => _connected.length;
 
+  void setDeviceName(String manufacturer, String model) {
+    final m = manufacturer.isEmpty
+        ? ''
+        : manufacturer[0].toUpperCase() + manufacturer.substring(1);
+    final base = ('$m $model').trim();
+    deviceName = base.isEmpty ? 'Camera' : base;
+  }
+
   void _notify() {
     if (!_disposed) notifyListeners();
   }
@@ -52,20 +63,23 @@ class CameraService extends ChangeNotifier {
     code = await PairingCode.loadOrCreate();
     _notify();
 
-    final ok = await ensureCamera();
-    if (ok && !_readyFired) {
+    // The camera and microphone stay OFF until a viewer turns them on.
+    if (!_readyFired) {
       _readyFired = true;
-      onReady?.call();
+      onReady?.call(); // lets the foreground service start
     }
-    if (!ok || !dbConfigured || started) return;
+    if (!dbConfigured || started) return;
 
     started = true;
     _ice = await IceConfig.load(_db);
     await _safeDelete('cams/$code/sessions'); // drop stale offers
     _beatNow();
-    _beat = Timer.periodic(kPresenceBeat, (_) => _beatNow());
+    _beat = Timer.periodic(kPresenceBeat, (_) {
+      _beatNow();
+      _maybeSleep();
+    });
     _poll = Timer.periodic(const Duration(seconds: 1), (_) => _pollSessions());
-    _watch = Timer.periodic(const Duration(seconds: 10), (_) => _watchdog());
+    _watch = Timer.periodic(const Duration(seconds: 5), (_) => _watchdog());
     _notify();
   }
 
@@ -89,6 +103,7 @@ class CameraService extends ChangeNotifier {
         },
       }).timeout(const Duration(seconds: 25));
       stream = s;
+      accessGranted = true;
       error = null;
       _notify();
       return true;
@@ -151,12 +166,34 @@ class CameraService extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// Asks for camera + microphone permission once (the system shows its
+  /// dialogs), then switches the camera straight off again.
+  Future<bool> requestAccess() async {
+    final ok = await ensureCamera();
+    if (_peers.isEmpty) await _closeCamera();
+    return ok;
+  }
+
+  /// Turn the camera and mic off when nobody is watching any more.
+  void _maybeSleep() {
+    if (stream == null || _restarting || _switching) return;
+    if (_peers.isNotEmpty || viewers > 0) {
+      _lastActive = DateTime.now();
+      return;
+    }
+    if (DateTime.now().difference(_lastActive) >= const Duration(seconds: 15)) {
+      _closeCamera();
+    }
+  }
+
   // ---- Self-healing -----------------------------------------------------
 
   /// If the camera silently freezes, the encoder stops producing frames.
   /// Detect that and restart the camera.
   Future<void> _watchdog() async {
-    if (_disposed || _restarting || _switching || viewers == 0) {
+    if (_disposed || _restarting || _switching) return;
+    if (stream == null) return; // off on purpose until a viewer turns it on
+    if (viewers == 0) {
       _lastFrames = -1;
       _stalls = 0;
       return;
@@ -223,6 +260,7 @@ class CameraService extends ChangeNotifier {
       await _db.put('cams/$code/presence', {
         'ts': {'.sv': 'timestamp'},
         'state': viewers > 0 ? 'live' : 'standby',
+        'name': '$deviceName (${code.length >= 3 ? code.substring(code.length - 3) : code})',
       });
     } catch (_) {}
   }
@@ -255,6 +293,7 @@ class CameraService extends ChangeNotifier {
               s['offer'] is Map) {
             if (stream == null && !(await ensureCamera())) continue;
             _handled.add(sid);
+            _lastActive = DateTime.now();
             await _accept(sid, Map<String, dynamic>.from(s['offer'] as Map));
           }
 
@@ -366,6 +405,7 @@ class CameraService extends ChangeNotifier {
   }
 
   void _syncViewers() {
+    if (viewers > 0) _lastActive = DateTime.now();
     _notify();
     _beatNow();
   }
