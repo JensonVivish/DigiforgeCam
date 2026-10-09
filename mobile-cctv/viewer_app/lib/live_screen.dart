@@ -135,6 +135,15 @@ class LiveScreen extends StatelessWidget {
                       const CircularProgressIndicator(),
                       const SizedBox(height: 16),
                       Text(status, style: const TextStyle(color: DF.muted)),
+                      if (svc.cameraDiag.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 10, 24, 0),
+                          child: Text(
+                            'Camera: ${svc.cameraDiag}',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: DF.warn, fontSize: 12),
+                          ),
+                        ),
                     ],
                   ),
                 ),

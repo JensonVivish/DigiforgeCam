@@ -121,13 +121,20 @@ class BackgroundController extends ChangeNotifier {
     _n();
   }
 
-  /// The camera is up: make sure the foreground service is running too.
-  Future<void> _onCameraReady() async {
+  /// Starts the foreground service once camera + mic permission exist (Android 11+
+  /// needs that, and the app must be visible when it starts).
+  Future<void> ensureService() async {
     await refresh();
-    if (!status.running) {
-      await BackgroundBridge.start('Ready - the camera turns on when you watch');
-      await refresh();
-    }
+    final s = status;
+    if (!s.ok || s.running) return;
+    if (!(s.camera && s.mic)) return; // started right after the permissions are granted
+    await BackgroundBridge.start('Ready - the camera turns on when you watch');
+    await refresh();
+  }
+
+  /// Signaling is ready: make sure the foreground service is running too.
+  Future<void> _onCameraReady() async {
+    await ensureService();
     // Opened by the boot receiver (Android 11+): close again, nobody needs to see it.
     if (await BackgroundBridge.consumeAutostartLaunch()) {
       await Future<void>.delayed(const Duration(seconds: 3));

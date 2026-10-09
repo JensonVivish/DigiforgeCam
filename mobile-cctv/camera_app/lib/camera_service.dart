@@ -115,6 +115,7 @@ class CameraService extends ChangeNotifier {
       [{'audio': false, 'video': {'facingMode': facing}}, facing],
       [{'audio': false, 'video': true}, facing],
     ];
+    var lastErr = '';
     for (var round = 0; round < 2; round++) {
       for (final a in attempts) {
         try {
@@ -127,18 +128,22 @@ class CameraService extends ChangeNotifier {
           error = null;
           _lastActive = DateTime.now();
           _notify();
+          _diag('camera is on');
           return true;
         } on TimeoutException {
           error = 'Camera did not respond.';
+          _diag('camera did not respond in time');
           _notify();
           return false;
-        } catch (_) {
-          // try the next, simpler variant
+        } catch (e) {
+          lastErr = e.toString(); // try the next, simpler variant
         }
       }
       await Future<void>.delayed(const Duration(seconds: 2));
     }
     error = 'Camera or microphone not available.';
+    final short = lastErr.length > 140 ? lastErr.substring(0, 140) : lastErr;
+    _diag('camera could not open: $short');
     _notify();
     return false;
   }
@@ -299,6 +304,16 @@ class CameraService extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// Latest step, written to Firebase so the viewer can show why a connection
+  /// is slow or failing.
+  void _diag(String msg) {
+    if (!started) return;
+    _db.put('cams/$code/diag', {
+      'ts': {'.sv': 'timestamp'},
+      'msg': msg,
+    }).catchError((_) {});
+  }
+
   Future<void> _safeDelete(String path) async {
     try {
       await _db.delete(path);
@@ -336,6 +351,7 @@ class CameraService extends ChangeNotifier {
                 !_handled.contains(sid) &&
                 s['offer'] is Map) {
               _handled.add(sid);
+              _diag('request received, turning camera on');
               // A viewer wants in: turn the camera on first.
               if (stream == null && !(await ensureCamera())) continue;
               // The viewer may have given up while the camera was starting.
@@ -343,6 +359,7 @@ class CameraService extends ChangeNotifier {
               if (fresh is! Map) continue;
               _lastActive = DateTime.now();
               await _accept(sid, Map<String, dynamic>.from(fresh));
+              _diag('answer sent, connecting');
             }
 
             final pc = _peers[sid];
@@ -409,6 +426,7 @@ class CameraService extends ChangeNotifier {
         switch (state) {
           case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
             _connected.add(sid);
+            _diag('connected');
             _syncViewers();
             Timer(const Duration(seconds: 6),
                 () => _safeDelete('cams/$code/sessions/$sid'));
@@ -424,6 +442,9 @@ class CameraService extends ChangeNotifier {
             });
             break;
           case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+            _diag('network connection failed (strict network?)');
+            _drop(sid);
+            break;
           case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
             _drop(sid);
             break;
@@ -444,7 +465,8 @@ class CameraService extends ChangeNotifier {
         'sdp': answer.sdp,
         'type': answer.type,
       });
-    } catch (_) {
+    } catch (e) {
+      _diag('could not answer: $e');
       await _drop(sid);
     }
   }

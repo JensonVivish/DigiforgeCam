@@ -32,6 +32,7 @@ class ViewerService extends ChangeNotifier {
   String? error;
   String facing = ''; // 'environment' (back) or 'user' (front), reported by the camera
   bool switching = false; // a switch request is in flight
+  String cameraDiag = ''; // what the camera says it is doing (while connecting)
   List<Channel> channels = [];
   bool scanning = true; // first look-up not finished yet
   String? listError;
@@ -82,6 +83,7 @@ class ViewerService extends ChangeNotifier {
 
   Future<void> connect(String code) async {
     error = null;
+    cameraDiag = '';
     _stopListing();
     _want = true;
     target = code;
@@ -473,7 +475,7 @@ class ViewerService extends ChangeNotifier {
     _presenceTimer?.cancel();
     _checkPresence();
     _presenceTimer =
-        Timer.periodic(const Duration(seconds: 4), (_) => _checkPresence());
+        Timer.periodic(const Duration(seconds: 2), (_) => _checkPresence());
   }
 
   /// Clock-skew-proof: we only look at whether the camera's server timestamp
@@ -482,6 +484,14 @@ class ViewerService extends ChangeNotifier {
     final cam = target;
     if (cam == null) return;
     try {
+      if (_want && state != ViewerState.live) {
+        final d = await _db.get('cams/$cam/diag');
+        final m = (d is Map && d['msg'] is String) ? d['msg'] as String : '';
+        if (m != cameraDiag) {
+          cameraDiag = m;
+          _n();
+        }
+      }
       final v = await _db.get('cams/$cam/presence');
       final ts = (v is Map ? v['ts'] : null)?.toString();
       if (v is Map && v['facing'] is String && v['facing'] != facing) {

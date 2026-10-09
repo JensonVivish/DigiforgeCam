@@ -72,6 +72,7 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
     _closeTimer?.cancel();
     _closeTimer = Timer(const Duration(milliseconds: 1200), () async {
       if (!_canClose) return;
+      await _bg.ensureService();
       // From now on the launcher icon opens nothing at all.
       if (_allGranted) await BackgroundBridge.setSetupDone(true);
       await BackgroundBridge.closeApp();
@@ -113,6 +114,7 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
       if (s.ok && s.sdk >= 23 && !s.batteryExempt) {
         await _step(BackgroundBridge.requestBattery);
       }
+      await _bg.ensureService(); // start it now that permissions exist
     } finally {
       if (mounted) setState(() => _running = false);
     }

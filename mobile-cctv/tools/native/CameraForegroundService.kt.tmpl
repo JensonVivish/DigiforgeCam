@@ -46,7 +46,14 @@ class CameraForegroundService : Service() {
         val notification = build(this, text)
         try {
             if (Build.VERSION.SDK_INT >= 30) {
-                startForeground(NOTIF_ID, notification, TYPE_CAMERA or TYPE_MICROPHONE)
+                var types = 0
+                if (Bridge.granted(this, "android.permission.CAMERA")) types = types or TYPE_CAMERA
+                if (Bridge.granted(this, "android.permission.RECORD_AUDIO")) types = types or TYPE_MICROPHONE
+                if (types != 0) {
+                    startForeground(NOTIF_ID, notification, types)
+                } else {
+                    startForeground(NOTIF_ID, notification)
+                }
             } else {
                 startForeground(NOTIF_ID, notification)
             }
