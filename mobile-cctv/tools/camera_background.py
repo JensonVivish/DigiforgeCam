@@ -30,6 +30,16 @@ mpath = "android/app/src/main/AndroidManifest.xml"
 m = open(mpath).read()
 
 
+perms = [
+    "FOREGROUND_SERVICE",
+    "FOREGROUND_SERVICE_CAMERA",
+    "FOREGROUND_SERVICE_MICROPHONE",
+    "RECEIVE_BOOT_COMPLETED",
+    "POST_NOTIFICATIONS",
+    "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+    "SYSTEM_ALERT_WINDOW",
+    "WAKE_LOCK",
+]
 if "FOREGROUND_SERVICE_CAMERA" not in m:
     block = "".join(
         '    <uses-permission android:name="android.permission.%s"/>\n' % p
