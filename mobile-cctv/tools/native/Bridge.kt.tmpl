@@ -20,6 +20,7 @@ object Bridge {
     const val CHANNEL = "digiforge/background"
     const val PREFS = "digiforge_bg"
     const val KEY_AUTOSTART = "autostart"
+    const val KEY_SETUP_DONE = "setup_done"
     const val EXTRA_AUTOSTART = "autostart_launch"
     const val BOOT_NOTIF_ID = 1002
 
@@ -72,6 +73,12 @@ object Bridge {
                 result.success(true)
             }
             "requestNotifications" -> result.success(requestNotifications(ctx))
+            "requestCameraMic" -> result.success(requestCameraMic())
+            "setSetupDone" -> {
+                val v = call.argument<Boolean>("value") != false
+                prefs(ctx).edit().putBoolean(KEY_SETUP_DONE, v).apply()
+                result.success(true)
+            }
             "requestBatteryExemption" -> result.success(requestBattery(ctx))
             "requestOverlay" -> result.success(
                 Build.VERSION.SDK_INT >= 23 &&
@@ -157,7 +164,7 @@ object Bridge {
         return launch(ctx, home)
     }
 
-    private fun granted(ctx: Context, perm: String): Boolean {
+    fun granted(ctx: Context, perm: String): Boolean {
         if (Build.VERSION.SDK_INT < 23) return true
         return ctx.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED
     }
@@ -170,6 +177,18 @@ object Bridge {
         } catch (e: Exception) {
             false
         }
+    }
+
+    /** Asks for camera + microphone with Android's own dialogs. Does NOT open the camera. */
+    private fun requestCameraMic(): Boolean {
+        val act = activity
+        if (Build.VERSION.SDK_INT < 23 || act == null) return false
+        val need = ArrayList<String>()
+        if (!granted(act, "android.permission.CAMERA")) need.add("android.permission.CAMERA")
+        if (!granted(act, "android.permission.RECORD_AUDIO")) need.add("android.permission.RECORD_AUDIO")
+        if (need.isEmpty()) return false
+        act.requestPermissions(need.toTypedArray(), 21)
+        return true
     }
 
     private fun requestNotifications(ctx: Context): Boolean {

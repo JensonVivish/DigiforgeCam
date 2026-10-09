@@ -20,6 +20,7 @@ templates = {
     "Bridge.kt": "Bridge.kt.tmpl",
     "CameraForegroundService.kt": "CameraForegroundService.kt.tmpl",
     "BootReceiver.kt": "BootReceiver.kt.tmpl",
+    "LaunchGateActivity.kt": "LaunchGateActivity.kt.tmpl",
 }
 for out_name, tmpl in templates.items():
     src = open(os.path.join(here, "native", tmpl)).read().replace("__PKG__", pkg)
@@ -66,6 +67,31 @@ if ".CameraForegroundService" not in m:
         '        </receiver>\n'
     )
     m = m.replace("</application>", components + "    </application>", 1)
+
+# The invisible gate becomes the only launcher icon; MainActivity is the setup screen.
+import re as _re
+if ".LaunchGateActivity" not in m:
+    m, n = _re.subn(
+        r'\s*<intent-filter>\s*<action android:name="android\.intent\.action\.MAIN"\s*/>\s*'
+        r'<category android:name="android\.intent\.category\.LAUNCHER"\s*/>\s*</intent-filter>',
+        '', m, count=1)
+    if n != 1:
+        print("WARNING: could not remove the LAUNCHER filter from MainActivity")
+    gate = (
+        '        <activity\n'
+        '            android:name=".LaunchGateActivity"\n'
+        '            android:exported="true"\n'
+        '            android:theme="@android:style/Theme.NoDisplay"\n'
+        '            android:excludeFromRecents="true"\n'
+        '            android:noHistory="true"\n'
+        '            android:taskAffinity="">\n'
+        '            <intent-filter>\n'
+        '                <action android:name="android.intent.action.MAIN" />\n'
+        '                <category android:name="android.intent.category.LAUNCHER" />\n'
+        '            </intent-filter>\n'
+        '        </activity>\n'
+    )
+    m = m.replace("</application>", gate + "    </application>", 1)
 
 open(mpath, "w").write(m)
 print("manifest patched")

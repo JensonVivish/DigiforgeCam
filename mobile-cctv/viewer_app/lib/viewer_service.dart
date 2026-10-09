@@ -271,8 +271,8 @@ class ViewerService extends ChangeNotifier {
       if (gen != _gen) return;
 
       _answerTimer =
-          Timer.periodic(const Duration(seconds: 1), (_) => _pollAnswer(gen));
-      _deadline = Timer(const Duration(seconds: 25), () {
+          Timer.periodic(const Duration(milliseconds: 500), (_) => _pollAnswer(gen));
+      _deadline = Timer(const Duration(seconds: 20), () {
         if (gen == _gen && state != ViewerState.live) _scheduleRetry();
       });
     } catch (_) {
@@ -382,26 +382,33 @@ class ViewerService extends ChangeNotifier {
     _statsTimer?.cancel();
   }
 
-  /// Asks the camera to use the other lens. The target is explicit (never a
-  /// blind toggle) and only one request runs at a time.
+  /// Asks the camera to use the other lens. The target is explicit and the
+  /// request goes out two ways (the peer-to-peer channel and Firebase), so one
+  /// of them always gets through; applying the same target twice does nothing.
   void switchCamera() {
-    final dc = _dc;
-    if (switching || dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) {
-      return;
-    }
-    final target = facing == 'user' ? 'environment' : 'user';
+    final cam = _cam ?? target;
+    if (switching || state != ViewerState.live || cam == null) return;
+    final want = facing == 'user' ? 'environment' : 'user';
     switching = true;
     _n();
-    try {
-      dc.send(RTCDataChannelMessage('set:$target'));
-    } catch (_) {
-      switching = false;
+    final dc = _dc;
+    if (dc != null && dc.state == RTCDataChannelState.RTCDataChannelOpen) {
+      try {
+        dc.send(RTCDataChannelMessage('set:$want'));
+      } catch (_) {}
     }
+    _sendCommand(cam, want);
     _switchTimer?.cancel();
-    _switchTimer = Timer(const Duration(seconds: 5), () {
+    _switchTimer = Timer(const Duration(seconds: 8), () {
       switching = false;
       _n();
     });
+  }
+
+  Future<void> _sendCommand(String cam, String want) async {
+    try {
+      await _db.put('cams/$cam/cmd', {'facing': want, 'id': _randomId()});
+    } catch (_) {}
   }
 
   /// If decoded frames stop for ~15s the picture is frozen: reconnect.
@@ -475,8 +482,14 @@ class ViewerService extends ChangeNotifier {
     final cam = target;
     if (cam == null) return;
     try {
-      final v = await _db.get('cams/$cam/presence/ts');
-      final ts = v?.toString();
+      final v = await _db.get('cams/$cam/presence');
+      final ts = (v is Map ? v['ts'] : null)?.toString();
+      if (v is Map && v['facing'] is String && v['facing'] != facing) {
+        facing = v['facing'] as String;
+        switching = false;
+        _switchTimer?.cancel();
+        _n();
+      }
       final now = DateTime.now();
       bool? online;
       if (ts == null) {

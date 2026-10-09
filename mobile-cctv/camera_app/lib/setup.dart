@@ -21,6 +21,7 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
   bool _skipped = false;
   bool _running = false;
   Completer<void>? _resume;
+  bool _left = false; // a system dialog covered the app
   Timer? _closeTimer;
 
   BackgroundController get _bg => backgroundController;
@@ -44,6 +45,7 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _left = true;
     if (state == AppLifecycleState.resumed) {
       final c = _resume;
       if (c != null && !c.isCompleted) c.complete();
@@ -64,13 +66,15 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
     return _cameraOk && s.notifications && batteryOk;
   }
 
-  bool get _canClose =>
-      (_allGranted || _skipped) && _bg.status.ok && cameraService.error == null;
+  bool get _canClose => (_allGranted || _skipped) && _bg.status.ok;
 
   void _scheduleClose() {
     _closeTimer?.cancel();
-    _closeTimer = Timer(const Duration(milliseconds: 1500), () {
-      if (_canClose) BackgroundBridge.closeApp();
+    _closeTimer = Timer(const Duration(milliseconds: 1200), () async {
+      if (!_canClose) return;
+      // From now on the launcher icon opens nothing at all.
+      if (_allGranted) await BackgroundBridge.setSetupDone(true);
+      await BackgroundBridge.closeApp();
     });
   }
 
@@ -78,9 +82,14 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
   Future<void> _step(Future<bool> Function() open) async {
     final c = Completer<void>();
     _resume = c;
+    _left = false;
     final launched = await open();
     if (launched) {
-      await c.future.timeout(const Duration(seconds: 120), onTimeout: () {});
+      // Give the dialog a moment to appear; if nothing covers the app, move on.
+      await Future.any([c.future, Future<void>.delayed(const Duration(seconds: 3))]);
+      if (_left && !c.isCompleted) {
+        await c.future.timeout(const Duration(seconds: 120), onTimeout: () {});
+      }
     }
     _resume = null;
     await _bg.refresh();
@@ -90,10 +99,9 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
     if (_running) return;
     setState(() => _running = true);
     try {
-      // 1. Camera + microphone (system dialogs), then the camera goes straight off again
+      // 1. Camera + microphone: Android's own dialogs (the camera itself is NOT started)
       if (!_cameraOk) {
-        await cameraService.requestAccess();
-        await _bg.refresh();
+        await _step(BackgroundBridge.requestCameraMic);
       }
       var s = _bg.status;
       // 2. Notifications (Android 13+ only)
@@ -125,7 +133,6 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
               if (!s.ok)
                 _Warn('The background service is not available in this build.\n\n'
                     'Reason: ${s.error}'),
-              if (cameraService.error != null) _Warn(cameraService.error!),
               if (done) ..._donePage() else ..._setupPage(s),
             ],
           ),
@@ -153,13 +160,6 @@ class _SetupGateState extends State<SetupGate> with WidgetsBindingObserver {
         textAlign: TextAlign.center,
         style: TextStyle(color: DF.muted),
       ),
-      if (cameraService.error != null) ...[
-        const SizedBox(height: 16),
-        OutlinedButton(
-          onPressed: cameraService.requestAccess,
-          child: const Text('Try camera again'),
-        ),
-      ],
     ];
   }
 

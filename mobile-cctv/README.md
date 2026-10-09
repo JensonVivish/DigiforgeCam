@@ -54,32 +54,40 @@ There is no pairing code or QR in this prototype: every camera that is online sh
 
 Built for older phones: Android 5.0 and up, tuned for Android 5 to 10 (Samsung and Realme included).
 
-- **Camera and mic are off until you ask.** The camera app runs all the time (a light foreground service that
-  only watches for requests), but the camera and microphone only turn on when you press **Turn on** in the
-  viewer, and turn off again when you press **Turn off camera** (or ~15 s after the last viewer leaves).
-  The second phone idles at very low battery use. Turning on takes a second or two.
-- **One-time setup, no Settings app:** the camera app opens, shows Android's own permission dialogs one after
-  another (camera, microphone, notifications on Android 13+, keep running in background); tap Allow on each.
-  Then it closes itself. Opening it again just closes it again. Android itself requires a tap on each dialog;
-  an app cannot grant these on its own.
+- **Install, then tap Open once.** Android never opens a sideloaded app by itself after a first install (only the
+  installer's own "Open" button can). The first launch shows Android's permission dialogs one after another
+  (camera, microphone, notifications on Android 13+, keep running in background). Tap Allow on each; no Settings app.
+  The camera is NOT started for this. Then the screen closes itself.
+- **After setup the app never shows again.** The launcher icon is an invisible gate: tapping it only makes sure the
+  background service is running and disappears immediately. (If a permission is later taken away, it opens the
+  setup screen again.)
+- **Camera and mic are off until you ask.** The camera app runs all the time as a light background service that
+  only watches for requests. The camera and microphone turn on when you press **Turn on** in the viewer, and turn off
+  ~15 s after the last viewer leaves or when you press **Turn off camera**. Turning on takes a second or two.
 - **Background:** a foreground service keeps the app alive with the screen off and after it is swiped away. If the
   phone kills it anyway, it asks Android to start it again. The notification's **Stop** button ends everything.
 - **Start after restart:** on Android 10 and older the service starts from the boot broadcast with nothing on
-  screen. On Android 11+ the app opens briefly and closes itself. On some phones (notably Realme) Android blocks
-  apps from starting at boot unless "Auto launch / Autostart" is allowed for the app in the phone's own settings;
-  an app cannot switch that on itself, so if the camera is not listed in the viewer after a restart, check that setting once.
+  screen. On Android 11+ the invisible gate opens briefly. On some phones (notably Realme) Android blocks apps from
+  starting at boot unless "Auto launch / Autostart" is allowed for the app in the phone's own settings; an app cannot
+  switch that on itself, so if the camera is not listed in the viewer after a restart, check that setting once.
+- **Pairing speed:** both sides check Firebase twice a second during connection; a free public relay is used as a
+  fallback only when a direct connection is impossible (strict mobile networks). Add your own TURN at `config/turn`
+  to replace it.
+- **Camera trouble is handled silently:** if the camera cannot open (busy, other app, microphone in use) the app
+  retries with simpler settings (other lens, video only). No error screens.
 - **Another camera app takes the camera:** the stream stops; the viewer keeps reconnecting and the camera app
   takes the camera back as soon as it is free. A frozen picture is detected within ~15 s and the camera restarts.
-- **Front/back camera:** switch from the viewer. The request has an explicit target, runs one at a time, and the
-  camera reports which lens is active. Old phones cannot open both lenses at once.
-- **Firebase cleanup:** the viewer removes cameras that have been offline for over a day (or that only left
-  stray data behind). A camera recreates its entry by itself when it comes back.
+- **Front/back camera:** switch from the viewer. The request goes over two paths (peer-to-peer channel and Firebase)
+  with an explicit target, so it cannot toggle back; if the phone refuses a live switch, the camera reopens on the
+  other lens and the viewer reconnects. Old phones cannot open both lenses at once.
+- **Firebase cleanup:** the viewer removes cameras that have been offline for over a day (or that only left stray
+  data behind). A camera recreates its entry by itself when it comes back.
 
 The camera captures at 640x480, 15 fps. Change `kCaptureWidth/Height/Fps` in `camera_app/lib/camera_service.dart`.
 
 ## Test checklist (on real phones)
 
-1. Install both apps. Camera phone: open the camera app, tap Allow on each dialog; it should say All set and close.
+1. Install both apps. Camera phone: tap Open in the installer, tap Allow on each dialog; it should say All set and close, and the camera light must NOT turn on. Tapping the app icon afterwards must show nothing.
 2. Viewer: the camera appears in the list (model name) within ~5 s. Press **Turn on**: video + sound within a few seconds.
    Press **Turn off camera**: the camera light on the camera phone goes off within ~15 s.
 3. Background: with the camera on, lock the camera phone and wait 5 minutes: video must keep going.

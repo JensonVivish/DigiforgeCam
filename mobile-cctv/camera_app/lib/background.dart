@@ -77,6 +77,8 @@ class BackgroundBridge {
 
   static Future<bool> start(String text) => _call('start', {'text': text});
   static Future<bool> requestNotifications() => _call('requestNotifications');
+  static Future<bool> requestCameraMic() => _call('requestCameraMic');
+  static Future<bool> setSetupDone(bool v) => _call('setSetupDone', {'value': v});
   static Future<bool> requestBattery() => _call('requestBatteryExemption');
   static Future<bool> requestOverlay() => _call('requestOverlay');
   static Future<bool> openVendorSettings() => _call('openVendorSettings');

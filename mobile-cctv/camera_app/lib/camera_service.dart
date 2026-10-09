@@ -9,21 +9,23 @@ const int kCaptureWidth = 640;
 const int kCaptureHeight = 480;
 const int kCaptureFps = 15;
 
-/// Camera side: captures video+audio, publishes presence, answers viewer offers
-/// through Firebase RTDB signaling, then streams peer-to-peer.
-/// No preview and no UI state: it is started from main() and also runs with no screen.
+/// Camera side. It sits idle (camera and microphone OFF) and publishes a
+/// heartbeat. When a viewer presses Turn on, it opens the camera, answers the
+/// viewer through Firebase signaling and streams peer-to-peer. When the last
+/// viewer leaves, the camera and mic are switched off again.
+/// Started from main(), not from a widget, so it also runs with no screen.
 class CameraService extends ChangeNotifier {
   final Rtdb _db = Rtdb();
 
   String code = '------';
   MediaStream? stream;
-  String? error;
+  String? error; // internal only; never shown once setup is finished
   String facing = 'environment'; // 'environment' = back, 'user' = front
   String deviceName = 'Camera';
-  VoidCallback? onReady; // fired once, when the camera first comes up
+  VoidCallback? onReady; // fired once, when signaling is ready
   bool _readyFired = false;
   bool started = false;
-  bool accessGranted = false; // camera + mic permission has been given
+  bool accessGranted = false;
   DateTime _lastActive = DateTime.now();
 
   final Map<String, RTCPeerConnection> _peers = {};
@@ -32,6 +34,7 @@ class CameraService extends ChangeNotifier {
   final Set<String> _connected = {};
   final Map<String, Set<String>> _seen = {};
   List<Map<String, dynamic>> _ice = [];
+  String _lastCmdId = '';
 
   Timer? _poll;
   Timer? _beat;
@@ -46,6 +49,10 @@ class CameraService extends ChangeNotifier {
 
   int get viewers => _connected.length;
 
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
   void setDeviceName(String manufacturer, String model) {
     final m = manufacturer.isEmpty
         ? ''
@@ -54,16 +61,10 @@ class CameraService extends ChangeNotifier {
     deviceName = base.isEmpty ? 'Camera' : base;
   }
 
-  void _notify() {
-    if (!_disposed) notifyListeners();
-  }
-
   Future<void> start() async {
-    error = null;
     code = await PairingCode.loadOrCreate();
     _notify();
 
-    // The camera and microphone stay OFF until a viewer turns them on.
     if (!_readyFired) {
       _readyFired = true;
       onReady?.call(); // lets the foreground service start
@@ -73,45 +74,73 @@ class CameraService extends ChangeNotifier {
     started = true;
     _ice = await IceConfig.load(_db);
     await _safeDelete('cams/$code/sessions'); // drop stale offers
+    try {
+      final c = await _db.get('cams/$code/cmd'); // ignore commands from before this start
+      _lastCmdId = (c is Map ? c['id']?.toString() : null) ?? '';
+    } catch (_) {}
     _beatNow();
     _beat = Timer.periodic(kPresenceBeat, (_) {
       _beatNow();
       _maybeSleep();
     });
-    _poll = Timer.periodic(const Duration(seconds: 1), (_) => _pollSessions());
+    _poll = Timer.periodic(const Duration(milliseconds: 500), (_) => _pollSessions());
     _watch = Timer.periodic(const Duration(seconds: 5), (_) => _watchdog());
     _notify();
   }
 
-  // ---- Camera -----------------------------------------------------------
+  // ---- Camera on / off --------------------------------------------------
 
-  /// Opens camera + mic if not open yet (this is also what asks for permission).
+  /// Opens camera + mic if not open yet.
   Future<bool> ensureCamera() {
     if (stream != null) return Future.value(true);
     return _opening ??= _open().whenComplete(() => _opening = null);
   }
 
+  Map<String, dynamic> _video(String f) => {
+        'facingMode': f,
+        'width': {'ideal': kCaptureWidth},
+        'height': {'ideal': kCaptureHeight},
+        'frameRate': {'ideal': kCaptureFps},
+      };
+
+  /// Tries the preferred settings first, then simpler ones (other lens, video
+  /// only if the microphone is busy), and retries once after a short pause
+  /// because a camera that was just released by another app needs a moment.
   Future<bool> _open() async {
-    try {
-      final s = await navigator.mediaDevices.getUserMedia({
-        'audio': true,
-        'video': {
-          'facingMode': facing,
-          'width': {'ideal': kCaptureWidth},
-          'height': {'ideal': kCaptureHeight},
-          'frameRate': {'ideal': kCaptureFps},
-        },
-      }).timeout(const Duration(seconds: 25));
-      stream = s;
-      accessGranted = true;
-      error = null;
-      _notify();
-      return true;
-    } catch (_) {
-      error = 'Camera or microphone not available.';
-      _notify();
-      return false;
+    final other = facing == 'user' ? 'environment' : 'user';
+    final attempts = <List<Object>>[
+      [{'audio': true, 'video': _video(facing)}, facing],
+      [{'audio': true, 'video': {'facingMode': facing}}, facing],
+      [{'audio': true, 'video': {'facingMode': other}}, other],
+      [{'audio': false, 'video': {'facingMode': facing}}, facing],
+      [{'audio': false, 'video': true}, facing],
+    ];
+    for (var round = 0; round < 2; round++) {
+      for (final a in attempts) {
+        try {
+          final s = await navigator.mediaDevices
+              .getUserMedia(a[0] as Map<String, dynamic>)
+              .timeout(const Duration(seconds: 12));
+          stream = s;
+          facing = a[1] as String;
+          accessGranted = true;
+          error = null;
+          _lastActive = DateTime.now();
+          _notify();
+          return true;
+        } on TimeoutException {
+          error = 'Camera did not respond.';
+          _notify();
+          return false;
+        } catch (_) {
+          // try the next, simpler variant
+        }
+      }
+      await Future<void>.delayed(const Duration(seconds: 2));
     }
+    error = 'Camera or microphone not available.';
+    _notify();
+    return false;
   }
 
   Future<void> _closeCamera() async {
@@ -129,29 +158,52 @@ class CameraService extends ChangeNotifier {
     _notify();
   }
 
-  /// Switch to the 'user' (front) or 'environment' (back) camera.
-  /// The target is explicit, so a repeated or duplicated command can never
-  /// flip the camera back by accident, and only one switch runs at a time.
+  /// Turn the camera and mic off when nobody is watching any more.
+  void _maybeSleep() {
+    if (stream == null || _restarting || _switching) return;
+    if (_peers.isNotEmpty || viewers > 0) {
+      _lastActive = DateTime.now();
+      return;
+    }
+    if (DateTime.now().difference(_lastActive) >= const Duration(seconds: 15)) {
+      _closeCamera();
+    }
+  }
+
+  // ---- Front / back camera ----------------------------------------------
+
+  /// Switch to the 'user' (front) or 'environment' (back) camera. The target
+  /// is explicit, so repeating or duplicating a command changes nothing.
   Future<void> setFacing(String want) async {
     if (want != 'user' && want != 'environment') return;
     if (_switching) return;
     if (want == facing) {
       _broadcastFacing();
+      _beatNow();
       return;
     }
     final s = stream;
-    if (s == null || s.getVideoTracks().isEmpty) return;
-    _switching = true;
-    try {
-      // The platform answers with the camera that is really active now.
-      final isFront = await Helper.switchCamera(s.getVideoTracks().first);
-      facing = isFront ? 'user' : 'environment';
-    } catch (_) {
-      // keep the previous value
-    } finally {
-      _switching = false;
+    if (s == null || s.getVideoTracks().isEmpty) {
+      facing = want; // used the next time the camera turns on
       _broadcastFacing();
+      _beatNow();
+      return;
     }
+    _switching = true;
+    var switched = false;
+    try {
+      await Helper.switchCamera(s.getVideoTracks().first);
+      switched = true;
+    } catch (_) {}
+    facing = want;
+    if (!switched) {
+      // Plan B: reopen the camera on the requested lens; viewers reconnect by themselves.
+      await _restartCamera();
+    }
+    _switching = false;
+    _lastActive = DateTime.now();
+    _broadcastFacing();
+    _beatNow();
   }
 
   void _broadcastFacing() {
@@ -166,30 +218,10 @@ class CameraService extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Asks for camera + microphone permission once (the system shows its
-  /// dialogs), then switches the camera straight off again.
-  Future<bool> requestAccess() async {
-    final ok = await ensureCamera();
-    if (_peers.isEmpty) await _closeCamera();
-    return ok;
-  }
-
-  /// Turn the camera and mic off when nobody is watching any more.
-  void _maybeSleep() {
-    if (stream == null || _restarting || _switching) return;
-    if (_peers.isNotEmpty || viewers > 0) {
-      _lastActive = DateTime.now();
-      return;
-    }
-    if (DateTime.now().difference(_lastActive) >= const Duration(seconds: 15)) {
-      _closeCamera();
-    }
-  }
-
   // ---- Self-healing -----------------------------------------------------
 
-  /// If the camera silently freezes, the encoder stops producing frames.
-  /// Detect that and restart the camera.
+  /// If the camera silently freezes (or another app takes it), the encoder
+  /// stops producing frames. Detect that and restart the camera.
   Future<void> _watchdog() async {
     if (_disposed || _restarting || _switching) return;
     if (stream == null) return; // off on purpose until a viewer turns it on
@@ -257,10 +289,12 @@ class CameraService extends ChangeNotifier {
 
   Future<void> _beatNow() async {
     try {
+      final suffix = code.length >= 3 ? code.substring(code.length - 3) : code;
       await _db.put('cams/$code/presence', {
         'ts': {'.sv': 'timestamp'},
         'state': viewers > 0 ? 'live' : 'standby',
-        'name': '$deviceName (${code.length >= 3 ? code.substring(code.length - 3) : code})',
+        'name': '$deviceName ($suffix)',
+        'facing': facing,
       });
     } catch (_) {}
   }
@@ -281,37 +315,52 @@ class CameraService extends ChangeNotifier {
     if (_polling || !started || _disposed || _restarting) return;
     _polling = true;
     try {
-      final data = await _db.get('cams/$code/sessions');
-      if (data is Map) {
-        for (final e in data.entries) {
-          final sid = e.key as String;
-          final s = e.value;
-          if (s is! Map) continue;
+      final all = await _db.get('cams/$code');
+      if (all is Map) {
+        // Camera switch command from the viewer (backup path to the data channel).
+        final cmd = all['cmd'];
+        if (cmd is Map && cmd['id'] != null && cmd['id'].toString() != _lastCmdId) {
+          _lastCmdId = cmd['id'].toString();
+          final f = cmd['facing'];
+          if (f is String) setFacing(f);
+        }
 
-          if (!_peers.containsKey(sid) &&
-              !_handled.contains(sid) &&
-              s['offer'] is Map) {
-            if (stream == null && !(await ensureCamera())) continue;
-            _handled.add(sid);
-            _lastActive = DateTime.now();
-            await _accept(sid, Map<String, dynamic>.from(s['offer'] as Map));
-          }
+        final data = all['sessions'];
+        if (data is Map) {
+          for (final e in data.entries) {
+            final sid = e.key as String;
+            final s = e.value;
+            if (s is! Map) continue;
 
-          final pc = _peers[sid];
-          final cands = s['viewerCandidates'];
-          if (pc != null && cands is Map) {
-            final seen = _seen.putIfAbsent(sid, () => <String>{});
-            for (final ce in cands.entries) {
-              final k = ce.key as String;
-              if (seen.add(k) && ce.value is Map) {
-                final c = ce.value as Map;
-                try {
-                  await pc.addCandidate(RTCIceCandidate(
-                    c['candidate'] as String?,
-                    c['sdpMid'] as String?,
-                    c['sdpMLineIndex'] as int?,
-                  ));
-                } catch (_) {}
+            if (!_peers.containsKey(sid) &&
+                !_handled.contains(sid) &&
+                s['offer'] is Map) {
+              _handled.add(sid);
+              // A viewer wants in: turn the camera on first.
+              if (stream == null && !(await ensureCamera())) continue;
+              // The viewer may have given up while the camera was starting.
+              final fresh = await _db.get('cams/$code/sessions/$sid/offer');
+              if (fresh is! Map) continue;
+              _lastActive = DateTime.now();
+              await _accept(sid, Map<String, dynamic>.from(fresh));
+            }
+
+            final pc = _peers[sid];
+            final cands = s['viewerCandidates'];
+            if (pc != null && cands is Map) {
+              final seen = _seen.putIfAbsent(sid, () => <String>{});
+              for (final ce in cands.entries) {
+                final k = ce.key as String;
+                if (seen.add(k) && ce.value is Map) {
+                  final c = ce.value as Map;
+                  try {
+                    await pc.addCandidate(RTCIceCandidate(
+                      c['candidate'] as String?,
+                      c['sdpMid'] as String?,
+                      c['sdpMLineIndex'] as int?,
+                    ));
+                  } catch (_) {}
+                }
               }
             }
           }
@@ -349,11 +398,7 @@ class CameraService extends ChangeNotifier {
         ch.onMessage = (RTCDataChannelMessage m) {
           if (m.isBinary) return;
           final t = m.text;
-          if (t.startsWith('set:')) {
-            setFacing(t.substring(4));
-          } else if (t == 'switch') {
-            setFacing(facing == 'environment' ? 'user' : 'environment');
-          }
+          if (t.startsWith('set:')) setFacing(t.substring(4));
         };
         ch.onDataChannelState = (RTCDataChannelState st) {
           if (st == RTCDataChannelState.RTCDataChannelOpen) _sendFacing(ch);

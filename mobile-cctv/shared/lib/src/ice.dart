@@ -10,6 +10,21 @@ class IceConfig {
     },
   ];
 
+  /// Free public relay used only when a direct connection is impossible (strict
+  /// mobile networks). Video stays end-to-end encrypted. Override by adding your
+  /// own TURN server at /config/turn.
+  static const List<Map<String, dynamic>> _publicRelay = [
+    {
+      'urls': [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+      ],
+      'username': 'openrelayproject',
+      'credential': 'openrelayproject',
+    },
+  ];
+
   /// STUN by default. If you add a TURN entry at /config/turn in the database
   /// (a map or a list of maps with urls / username / credential), both apps
   /// pick it up on the next connection - no rebuild needed.
@@ -28,6 +43,7 @@ class IceConfig {
         }
       }
     } catch (_) {}
+    if (servers.length == _stun.length) servers.addAll(_publicRelay);
     return servers;
   }
 }
